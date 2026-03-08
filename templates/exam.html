@@ -484,7 +484,7 @@ const helpMap = {
   more: "Uso: more [ARCHIVO]...\nMuestra contenido por paginas (simulado).",
   pwd: "Uso: pwd\nMuestra el directorio de trabajo actual.",
   du: "Uso: du [OPCION]... [ARCHIVO]...\n  -h  formato legible\n  -s  resumen total\n  -m  en megabytes",
-  df: "Uso: df [OPCION]... [ARCHIVO]...\n  -h  formato legible\n  -i  mostrar inodos",
+  df: "Uso: df [OPCION]... [ARCHIVO]...\n  -h  formato legible\n  -m  mostrar en MB\n  -i  mostrar inodos",
   free: "Uso: free [OPCION]\n  -m  mostrar en MB",
   w: "Uso: w\nMuestra usuarios conectados y su actividad.",
   last: "Uso: last [opciones]\nMuestra historial de inicios/cierres de sesion.",
@@ -549,6 +549,79 @@ function simulateFsCommand(tokens, raw) {
       return longFormat ? lsLongLine(fileName, node, humanReadable) : fileName;
     }
     return listDir(node, { showAll, longFormat, humanReadable, sortTime, reverse });
+  }
+
+  if (cmd === 'df') {
+    const flags = { h: false, i: false, m: false, k: false, P: false };
+    const targets = [];
+    for (const a of args) {
+      if (a.startsWith('-') && a !== '-') {
+        for (const ch of a.slice(1)) {
+          if (!(ch in flags)) return `df: invalid option -- '${ch}'\n${helpMap.df}`;
+          flags[ch] = true;
+        }
+      } else {
+        targets.push(a);
+      }
+    }
+
+    const toHuman = (kb) => {
+      const n = Number(kb || 0);
+      if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)}G`;
+      if (n >= 1024) return `${(n / 1024).toFixed(1)}M`;
+      return `${n}K`;
+    };
+
+    const mountForPath = (path) => {
+      if (path === '/run' || path.startsWith('/run/')) return '/run';
+      if (path === '/var' || path.startsWith('/var/')) return '/var';
+      return '/';
+    };
+
+    const fsRows = {
+      '/': { fs: '/dev/sda1', mount: '/', sizeK: 52428800, usedK: 46137344, availK: 6291456, usePct: 88, inodes: 3276800, iused: 212430, ifree: 3064370, iusePct: 7 },
+      '/var': { fs: '/dev/sda1', mount: '/var', sizeK: 52428800, usedK: 46137344, availK: 6291456, usePct: 88, inodes: 3276800, iused: 212430, ifree: 3064370, iusePct: 7 },
+      '/run': { fs: 'tmpfs', mount: '/run', sizeK: 1966080, usedK: 4096, availK: 1961984, usePct: 1, inodes: 497000, iused: 312, ifree: 496688, iusePct: 1 },
+    };
+
+    const rows = [];
+    if (targets.length === 0) {
+      rows.push(fsRows['/'], fsRows['/run']);
+    } else {
+      for (const t of targets) {
+        const p = normalizePath(t, shellState.cwd);
+        const node = getNode(p);
+        if (!node) return `df: ${t}: No such file or directory`;
+        rows.push(fsRows[mountForPath(p)] || fsRows['/']);
+      }
+    }
+
+    if (flags.i) {
+      const header = "Filesystem       Inodes   IUsed    IFree IUse% Mounted on";
+      const body = rows.map(r => `${r.fs.padEnd(15)} ${String(r.inodes).padStart(8)} ${String(r.iused).padStart(7)} ${String(r.ifree).padStart(8)} ${String(r.iusePct).padStart(4)}% ${r.mount}`).join('\n');
+      return `${header}\n${body}`;
+    }
+
+    if (flags.h) {
+      const header = "Filesystem      Size  Used Avail Use% Mounted on";
+      const body = rows.map(r => `${r.fs.padEnd(15)} ${toHuman(r.sizeK).padStart(5)} ${toHuman(r.usedK).padStart(5)} ${toHuman(r.availK).padStart(5)} ${String(r.usePct).padStart(3)}% ${r.mount}`).join('\n');
+      return `${header}\n${body}`;
+    }
+
+    if (flags.m) {
+      const header = "Filesystem     1M-blocks  Used Available Use% Mounted on";
+      const body = rows.map(r => {
+        const sizeM = Math.round(r.sizeK / 1024);
+        const usedM = Math.round(r.usedK / 1024);
+        const availM = Math.round(r.availK / 1024);
+        return `${r.fs.padEnd(14)} ${String(sizeM).padStart(9)} ${String(usedM).padStart(7)} ${String(availM).padStart(9)} ${String(r.usePct).padStart(3)}% ${r.mount}`;
+      }).join('\n');
+      return `${header}\n${body}`;
+    }
+
+    const header = "Filesystem     1K-blocks      Used Available Use% Mounted on";
+    const body = rows.map(r => `${r.fs.padEnd(14)} ${String(r.sizeK).padStart(10)} ${String(r.usedK).padStart(9)} ${String(r.availK).padStart(9)} ${String(r.usePct).padStart(3)}% ${r.mount}`).join('\n');
+    return `${header}\n${body}`;
   }
 
   if (cmd === 'mkdir') {

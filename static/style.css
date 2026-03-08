@@ -359,8 +359,8 @@ td button { margin-right: 6px; margin-bottom: 4px; }
 }
 @media (min-width: 901px) {
   #riskBox {
-    max-height: 21vh;
-    min-height: 120px;
+    max-height: 130px;
+    min-height: 96px;
     overflow: auto;
   }
 }

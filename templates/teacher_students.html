@@ -34,6 +34,7 @@
   <div class="time-chart">
     <div class="bar-chart-vertical" id="questionBars"></div>
   </div>
+  <div class="responses" id="questionMapBox" style="margin-top:8px;"></div>
   <div class="responses" id="slowQuestionsBox" style="margin-top:8px;"></div>
 
   <h2 style="margin-top:14px;">Historial de intentos</h2>
@@ -130,6 +131,15 @@ async function loadDetail(studentKey) {
       </div>
     `;
   }).join('') || '<div class="small">Sin datos de tiempo por pregunta.</div>';
+
+  document.getElementById('questionMapBox').innerHTML = qTimes.map(x => `
+    <div class="resp-item">
+      <div><strong>P${Number(x.question_number || 0)}</strong> - <code>${esc(x.item_id || 'sin_id')}</code></div>
+      <div class="small">${esc(x.topic || '-')}</div>
+      <div class="small">${esc(x.prompt || '-')}</div>
+      <div class="small">${fmtSeconds(x.seconds_total || 0)}</div>
+    </div>
+  `).join('') || '<div class="small">Sin mapeo de preguntas.</div>';
 
   const slow = [...qTimes].sort((a, b) => Number(b.seconds_total || 0) - Number(a.seconds_total || 0));
   document.getElementById('slowQuestionsBox').innerHTML = slow.map((x, i) => `

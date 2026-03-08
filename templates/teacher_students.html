@@ -40,6 +40,8 @@
 </section>
 
 <script>
+const studentDetailBaseUrl = "{{ url_for('teacher_student_detail', student_key='__KEY__') }}";
+
 function esc(v) {
   return String(v ?? '')
     .replaceAll('&', '&amp;')
@@ -74,7 +76,7 @@ async function loadStudents() {
 
 async function loadDetail(studentKey) {
   if (!studentKey) return;
-  const res = await fetch(`/api/teacher/student/${encodeURIComponent(studentKey)}`);
+  const res = await fetch(studentDetailBaseUrl.replace('__KEY__', encodeURIComponent(studentKey)));
   if (!res.ok) {
     document.getElementById('studentMeta').textContent = 'No se pudo cargar el detalle.';
     return;

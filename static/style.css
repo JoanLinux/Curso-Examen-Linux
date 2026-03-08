@@ -357,6 +357,13 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   padding: 8px;
   background: #f4f9ff;
 }
+@media (min-width: 901px) {
+  #riskBox {
+    max-height: 21vh;
+    min-height: 120px;
+    overflow: auto;
+  }
+}
 .teacher-brand-logos {
   display: grid;
   gap: 12px;

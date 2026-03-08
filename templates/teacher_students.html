@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <div class="history-head">
+    <h1>Analisis Individual por Alumno</h1>
+    <a class="btn-link" href="{{ url_for('teacher_page') }}">Volver a Dashboard</a>
+  </div>
+  <p class="meta">Selecciona un alumno para ver su desempeno acumulado, KPIs y riesgo ML.</p>
+
+  <div class="form-grid" style="max-width:700px;">
+    <label for="studentSel"><strong>Alumno</strong></label>
+    <select id="studentSel"></select>
+  </div>
+
+  <section class="grid-2" style="margin-top:14px;">
+    <article class="card-lite">
+      <h3>Resumen</h3>
+      <div id="studentMeta" class="small">Sin datos.</div>
+      <div id="studentML" class="small" style="margin-top:8px;"></div>
+    </article>
+    <article class="card-lite">
+      <h3>KPI clave</h3>
+      <div id="kpiMain" class="small">Sin datos.</div>
+    </article>
+  </section>
+
+  <h2 style="margin-top:14px;">Precision por tema</h2>
+  <div class="responses" id="precisionBox"></div>
+
+  <h2 style="margin-top:14px;">Tiempo mediano por tema</h2>
+  <div class="responses" id="timeTopicBox"></div>
+
+  <h2 style="margin-top:14px;">Tiempos por pregunta (ultimo intento)</h2>
+  <div class="time-chart">
+    <div class="bar-chart-vertical" id="questionBars"></div>
+  </div>
+
+  <h2 style="margin-top:14px;">Historial de intentos</h2>
+  <div class="responses" id="attemptsBox"></div>
+</section>
+
+<script>
+function esc(v) {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+function fmtSeconds(total) {
+  const s = Math.max(0, Number(total || 0));
+  const h = String(Math.floor(s / 3600)).padStart(2, '0');
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const sec = String(Math.floor(s % 60)).padStart(2, '0');
+  return `${h}:${m}:${sec}`;
+}
+
+async function loadStudents() {
+  const res = await fetch("{{ url_for('teacher_students') }}");
+  const data = await res.json();
+  const sel = document.getElementById('studentSel');
+  const rows = data.students || [];
+  sel.innerHTML = rows.map(s => {
+    const label = `${s.student_name} (${s.student_email || '-'}) - Intentos ${s.attempts_completed}/${s.attempts_total}`;
+    return `<option value="${esc(s.student_key)}">${esc(label)}</option>`;
+  }).join('');
+  if (rows.length > 0) {
+    await loadDetail(rows[0].student_key);
+  } else {
+    sel.innerHTML = '<option value="">Sin alumnos</option>';
+  }
+}
+
+async function loadDetail(studentKey) {
+  if (!studentKey) return;
+  const res = await fetch(`/api/teacher/student/${encodeURIComponent(studentKey)}`);
+  if (!res.ok) {
+    document.getElementById('studentMeta').textContent = 'No se pudo cargar el detalle.';
+    return;
+  }
+  const data = await res.json();
+  const s = data.student || {};
+  const k = data.kpis || {};
+  const ml = data.ml || {};
+
+  document.getElementById('studentMeta').innerHTML = `
+    <div><strong>${esc(s.student_name || '-')}</strong></div>
+    <div>Correo: ${esc(s.student_email || '-')}</div>
+    <div>Respuestas acumuladas: ${Number(data.responses_count || 0)}</div>
+  `;
+  document.getElementById('studentML').innerHTML = `
+    <div><strong>ML:</strong> Riesgo ${esc(ml.risk_level || 'bajo')} (${Number(ml.risk_prob || 0).toFixed(3)})</div>
+    <div>Modelo: ${esc(ml.model || 'heuristic')}</div>
+  `;
+  document.getElementById('kpiMain').innerHTML = `
+    <div>2do intento corrige: <strong>${Number(k.second_attempt_fix_rate_pct || 0).toFixed(2)}%</strong></div>
+    <div>Casos: ${(k.second_attempt_fix_cases || {}).fixed || 0}/${(k.second_attempt_fix_cases || {}).total || 0}</div>
+    <div>Error conceptual/sintaxis: ${(k.error_severity || {}).conceptual || 0}/${(k.error_severity || {}).sintaxis || 0}</div>
+  `;
+
+  document.getElementById('precisionBox').innerHTML = (k.precision_by_topic || []).map(x => `
+    <div class="resp-item">
+      <div><strong>${esc(x.topic)}</strong></div>
+      <div class="small">Precision: ${Number(x.precision_pct || 0).toFixed(2)}% (${x.total || 0})</div>
+    </div>
+  `).join('') || '<div class="small">Sin datos.</div>';
+
+  document.getElementById('timeTopicBox').innerHTML = (k.median_time_by_topic || []).map(x => `
+    <div class="resp-item">
+      <div><strong>${esc(x.topic)}</strong></div>
+      <div class="small">Tiempo mediano: ${fmtSeconds(x.median_seconds || 0)}</div>
+    </div>
+  `).join('') || '<div class="small">Sin datos.</div>';
+
+  const qTimes = data.latest_question_timing || [];
+  const maxT = Math.max(1, ...qTimes.map(x => Number(x.seconds_total || 0)));
+  document.getElementById('questionBars').innerHTML = qTimes.map(x => {
+    const h = (Number(x.seconds_total || 0) / maxT) * 100;
+    return `
+      <div class="vbar-col">
+        <div class="vbar-track"><div class="vbar-fill" style="height:${h.toFixed(2)}%;"></div></div>
+        <div class="vbar-label">P${Number(x.question_number || 0)}</div>
+        <div class="vbar-value">${Number(x.seconds_total || 0)}s</div>
+      </div>
+    `;
+  }).join('') || '<div class="small">Sin datos de tiempo por pregunta.</div>';
+
+  document.getElementById('attemptsBox').innerHTML = (data.attempts_timeline || []).map((a, i) => `
+    <div class="resp-item ${a.completed ? 'ok' : 'warn'}">
+      <div><strong>Intento ${i + 1}</strong> - ${a.completed ? 'Finalizado' : 'En curso'}</div>
+      <div class="small">Inicio: ${esc(a.started_at || '-')} UTC</div>
+      <div class="small">Fin: ${esc(a.finished_at || '-')} UTC</div>
+      <div class="small">Puntaje: ${Number(a.score || 0)}/${Number(a.total_items || 0)} (${Number(a.score_pct || 0).toFixed(2)}%)</div>
+      <div class="small">Tiempo: ${fmtSeconds(a.elapsed_seconds || 0)} | Reinicios: ${Number(a.resets_count || 0)}</div>
+    </div>
+  `).join('') || '<div class="small">Sin intentos.</div>';
+}
+
+document.getElementById('studentSel').addEventListener('change', async (e) => {
+  await loadDetail(e.target.value);
+});
+
+loadStudents();
+</script>
+{% endblock %}

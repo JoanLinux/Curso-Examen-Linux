@@ -13,6 +13,7 @@
     <p>Monitoreo en tiempo real de respuestas y avance por alumno.</p>
     <div class="actions" style="margin-top:8px; margin-bottom:8px;">
       <a class="btn-link" href="{{ url_for('teacher_history_page') }}">Historial</a>
+      <a class="btn-link secondary" href="{{ url_for('teacher_students_page') }}">Analisis por alumno</a>
     </div>
     <div class="meta" id="serverTime"></div>
     <table>
@@ -33,6 +34,8 @@
   </article>
 
   <article class="card">
+    <h2>APOYO IA ALUMNOS</h2>
+    <div class="responses" id="riskBox"></div>
     <h2>Ultimas respuestas</h2>
     <div class="responses" id="responsesBox"></div>
     <h2 style="margin-top:14px;">Distros</h2>
@@ -41,8 +44,6 @@
     <div class="responses" id="timingsBox"></div>
     <h2 style="margin-top:14px;">KPIs</h2>
     <div class="responses" id="kpisBox"></div>
-    <h2 style="margin-top:14px;">Alumnos con apoyo</h2>
-    <div class="responses" id="riskBox"></div>
   </article>
 </section>
 

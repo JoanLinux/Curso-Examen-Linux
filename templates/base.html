@@ -6,7 +6,7 @@
   <title>{{ title or 'Curso Linux' }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body class="{{ page_class or '' }}">
   <header class="topbar">
     <div class="brand-wrap">
       <div class="brand">Curso Linux - Evaluacion en Vivo</div>
@@ -14,7 +14,9 @@
     </div>
     <nav>
       <a href="{{ url_for('index') }}">Inicio</a>
-      <a href="{{ url_for('student_page') }}">Alumno</a>
+      {% if teacher_nav_mode %}
+      <span class="nav-pill">APOYO IA ALUMNOS</span>
+      {% endif %}
       {% if show_teacher_link %}
       <a href="{{ url_for('teacher_page') }}">Profesor</a>
       {% endif %}

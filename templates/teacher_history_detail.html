@@ -28,16 +28,18 @@
   <h2 style="margin-top:14px;">Grafica de Tiempo por Respuesta</h2>
   <div class="time-chart">
     {% set max_time = (timings|map(attribute='seconds_total')|max) if timings else 1 %}
-    {% for t in timings %}
-    {% set width = ((t.seconds_total / max_time) * 100) if max_time else 0 %}
-    <div class="bar-row">
-      <div class="bar-label">P{{ t.question_number }}</div>
-      <div class="bar-track">
-        <div class="bar-fill" style="width: {{ '%.2f'|format(width) }}%;"></div>
+    <div class="bar-chart-vertical">
+      {% for t in timings %}
+      {% set height = ((t.seconds_total / max_time) * 100) if max_time else 0 %}
+      <div class="vbar-col">
+        <div class="vbar-track">
+          <div class="vbar-fill" style="height: {{ '%.2f'|format(height) }}%;"></div>
+        </div>
+        <div class="vbar-label">P{{ t.question_number }}</div>
+        <div class="vbar-value">{{ t.seconds_total }}s</div>
       </div>
-      <div class="bar-value">{{ t.seconds_total }}s</div>
+      {% endfor %}
     </div>
-    {% endfor %}
   </div>
 
   <h2 style="margin-top:14px;">Respuestas y Terminal</h2>

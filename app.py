@@ -1866,7 +1866,262 @@ def create_app() -> Flask:
         auth_error = require_teacher_auth()
         if auth_error:
             return auth_error
-        return render_template("teacher.html", show_teacher_link=True)
+        return render_template("teacher.html", show_teacher_link=True, page_class="teacher-wide", teacher_nav_mode=True)
+
+    @app.get("/teacher/students")
+    def teacher_students_page():
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        return render_template("teacher_students.html", show_teacher_link=True, teacher_nav_mode=True)
+
+    @app.get("/api/teacher/students")
+    def teacher_students():
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        with get_db() as conn:
+            rows = conn.execute(
+                """
+                SELECT student_name, student_email, started_at, completed
+                FROM exam_sessions
+                ORDER BY started_at DESC
+                """
+            ).fetchall()
+        agg: Dict[str, Dict] = {}
+        for r in rows:
+            d = dict(r)
+            skey = student_key_for_cycle(d.get("student_name", ""), d.get("student_email", ""))
+            if skey not in agg:
+                agg[skey] = {
+                    "student_key": skey,
+                    "student_name": d.get("student_name", ""),
+                    "student_email": d.get("student_email", ""),
+                    "attempts_total": 0,
+                    "attempts_completed": 0,
+                    "last_started_at": d.get("started_at", ""),
+                }
+            agg[skey]["attempts_total"] += 1
+            if d.get("completed"):
+                agg[skey]["attempts_completed"] += 1
+        data = sorted(
+            agg.values(),
+            key=lambda x: ((x.get("student_name") or "").lower(), (x.get("student_email") or "").lower()),
+        )
+        return jsonify({"students": data})
+
+    @app.get("/api/teacher/student/<path:student_key>")
+    def teacher_student_detail(student_key: str):
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        wanted = (student_key or "").strip()
+        if not wanted:
+            return jsonify({"error": "Alumno invalido"}), 400
+
+        with get_db() as conn:
+            all_sessions = conn.execute(
+                """
+                SELECT *
+                FROM exam_sessions
+                ORDER BY started_at ASC
+                """
+            ).fetchall()
+
+            sessions = [dict(s) for s in all_sessions if student_key_for_cycle(s["student_name"], s["student_email"]) == wanted]
+            if not sessions:
+                return jsonify({"error": "Alumno no encontrado"}), 404
+
+            tokens = [s["session_token"] for s in sessions]
+            placeholders = ",".join(["?"] * len(tokens))
+
+            responses_raw = conn.execute(
+                f"""
+                SELECT r.session_token, r.item_index, r.item_id, r.item_type, r.prompt, r.user_answer, r.distro_guess, r.command_trace, r.extra_text, r.is_correct, r.expected, r.submitted_at
+                FROM responses r
+                WHERE r.session_token IN ({placeholders})
+                ORDER BY r.submitted_at ASC
+                """,
+                tokens,
+            ).fetchall()
+
+            timings_raw = conn.execute(
+                f"""
+                SELECT t.session_token, t.item_index, t.seconds_spent, t.last_entered_at
+                FROM question_timing t
+                WHERE t.session_token IN ({placeholders})
+                ORDER BY t.session_token ASC, t.item_index ASC
+                """,
+                tokens,
+            ).fetchall()
+
+            attempts_raw = conn.execute(
+                f"""
+                SELECT session_token, item_index, attempt_no, is_correct
+                FROM response_attempts
+                WHERE session_token IN ({placeholders})
+                ORDER BY session_token, item_index, attempt_no
+                """,
+                tokens,
+            ).fetchall()
+
+        now_iso = utcnow_iso()
+        topic_stats: Dict[str, Dict] = defaultdict(lambda: {"total": 0, "correct": 0, "times": [], "syntax": 0, "conceptual": 0})
+        timing_map: Dict[Tuple[str, int], int] = {}
+        timing_rows = []
+        for t in timings_raw:
+            d = dict(t)
+            extra = elapsed_seconds(d["last_entered_at"], now_iso) if d.get("last_entered_at") else 0
+            d["seconds_total"] = int(float(d.get("seconds_spent") or 0) + extra)
+            timing_map[(d["session_token"], int(d["item_index"]))] = d["seconds_total"]
+            timing_rows.append(d)
+
+        responses = []
+        correct = 0
+        for r in responses_raw:
+            d = dict(r)
+            item_id = d.get("item_id", "")
+            topic = topic_for_item_id(item_id)
+            is_correct = int(d.get("is_correct") or 0) == 1
+            sec = timing_map.get((d.get("session_token", ""), int(d.get("item_index") or 0)))
+            topic_stats[topic]["total"] += 1
+            topic_stats[topic]["correct"] += 1 if is_correct else 0
+            if sec is not None:
+                topic_stats[topic]["times"].append(sec)
+
+            trace_list = []
+            trace_raw = d.get("command_trace")
+            if isinstance(trace_raw, str) and trace_raw:
+                try:
+                    parsed = json.loads(trace_raw)
+                    if isinstance(parsed, list):
+                        trace_list = [str(x) for x in parsed]
+                except Exception:
+                    trace_list = []
+            sev = classify_error_severity(
+                d.get("item_type", ""),
+                item_id,
+                d.get("user_answer", ""),
+                d.get("expected", ""),
+                trace_list,
+            ) if not is_correct else "none"
+            if sev == "sintaxis":
+                topic_stats[topic]["syntax"] += 1
+            elif sev == "conceptual":
+                topic_stats[topic]["conceptual"] += 1
+            if is_correct:
+                correct += 1
+            d["topic"] = topic
+            d["error_severity"] = sev
+            d["command_trace_list"] = trace_list
+            responses.append(d)
+
+        precision_by_topic = []
+        median_time_by_topic = []
+        sev_con = 0
+        sev_syn = 0
+        for topic, st in topic_stats.items():
+            total = int(st["total"] or 0)
+            ok = int(st["correct"] or 0)
+            precision_by_topic.append(
+                {"topic": topic, "precision_pct": round((ok / total * 100.0) if total else 0.0, 2), "total": total}
+            )
+            median_time_by_topic.append(
+                {"topic": topic, "median_seconds": int(statistics.median(st["times"])) if st["times"] else 0}
+            )
+            sev_con += int(st["conceptual"] or 0)
+            sev_syn += int(st["syntax"] or 0)
+        precision_by_topic.sort(key=lambda x: (x["precision_pct"], -x["total"]))
+        median_time_by_topic.sort(key=lambda x: x["median_seconds"], reverse=True)
+
+        attempt_groups: Dict[Tuple[str, int], List[Dict]] = defaultdict(list)
+        for a in attempts_raw:
+            dd = dict(a)
+            attempt_groups[(dd["session_token"], int(dd["item_index"]))].append(dd)
+        second_fix_den = 0
+        second_fix_ok = 0
+        for _, group in attempt_groups.items():
+            group = sorted(group, key=lambda x: int(x.get("attempt_no") or 0))
+            if len(group) < 2:
+                continue
+            if int(group[0].get("is_correct") or 0) == 0:
+                second_fix_den += 1
+                if int(group[1].get("is_correct") or 0) == 1:
+                    second_fix_ok += 1
+
+        sessions_sorted = sorted(sessions, key=lambda x: x.get("started_at") or "")
+        attempts_timeline = []
+        for s in sessions_sorted:
+            total_items = max(1, int(s.get("total_items") or 0))
+            score = int(s.get("score") or 0)
+            attempts_timeline.append(
+                {
+                    "session_token": s["session_token"],
+                    "started_at": s.get("started_at"),
+                    "finished_at": s.get("finished_at"),
+                    "completed": bool(s.get("completed")),
+                    "resets_count": int(s.get("resets_count") or 0),
+                    "elapsed_seconds": elapsed_seconds(s.get("started_at"), s.get("finished_at")),
+                    "score": score,
+                    "total_items": int(s.get("total_items") or 0),
+                    "score_pct": round(score / total_items * 100.0, 2),
+                }
+            )
+
+        latest_session = sessions_sorted[-1]
+        latest_token = latest_session["session_token"]
+        latest_timing = [
+            {
+                "question_number": int(t["item_index"]) + 1,
+                "seconds_total": int(t["seconds_total"]),
+            }
+            for t in timing_rows
+            if t["session_token"] == latest_token
+        ]
+        latest_timing.sort(key=lambda x: x["question_number"])
+
+        total_responses = len(responses)
+        wrong_rate = (1.0 - (correct / total_responses)) if total_responses else 1.0
+        all_times = [int(t["seconds_total"]) for t in timing_rows]
+        syntax_err = sev_syn
+        conceptual_err = sev_con
+        err_total = max(1, syntax_err + conceptual_err)
+        feature_rows = [
+            {
+                "student_key": wanted,
+                "wrong_rate": wrong_rate,
+                "median_time_topic": float(statistics.median(all_times)) if all_times else 0.0,
+                "resets": int(sum(int(s.get("resets_count") or 0) for s in sessions_sorted)),
+                "dropouts": int(sum(1 for s in sessions_sorted if (not s.get("completed")) and elapsed_seconds(s.get("started_at"), s.get("finished_at")) >= 600)),
+                "syntax_error_ratio": float(syntax_err) / float(err_total),
+            }
+        ]
+        pred = build_ml_risk(feature_rows).get(wanted, {"risk_prob": 0.0, "risk_level": "bajo", "model": "heuristic"})
+
+        return jsonify(
+            {
+                "student": {
+                    "student_key": wanted,
+                    "student_name": latest_session.get("student_name", ""),
+                    "student_email": latest_session.get("student_email", ""),
+                },
+                "attempts_timeline": attempts_timeline,
+                "latest_question_timing": latest_timing,
+                "kpis": {
+                    "precision_by_topic": precision_by_topic,
+                    "median_time_by_topic": median_time_by_topic,
+                    "second_attempt_fix_rate_pct": round((second_fix_ok / second_fix_den * 100.0), 2) if second_fix_den else 0.0,
+                    "second_attempt_fix_cases": {"fixed": second_fix_ok, "total": second_fix_den},
+                    "error_severity": {"conceptual": sev_con, "sintaxis": sev_syn},
+                },
+                "ml": {
+                    "risk_prob": round(float(pred.get("risk_prob") or 0.0), 3),
+                    "risk_level": pred.get("risk_level", "bajo"),
+                    "model": pred.get("model", "heuristic"),
+                },
+                "responses_count": total_responses,
+            }
+        )
 
     @app.get("/api/teacher/live")
     def teacher_live():
@@ -2412,7 +2667,7 @@ def create_app() -> Flask:
                     "completed": bool(metrics.get("completed")),
                 }
             )
-        return render_template("teacher_history.html", archives=archives, show_teacher_link=True)
+        return render_template("teacher_history.html", archives=archives, show_teacher_link=True, teacher_nav_mode=True)
 
     @app.get("/teacher/history/<int:archive_id>")
     def teacher_history_detail_page(archive_id: int):
@@ -2480,6 +2735,7 @@ def create_app() -> Flask:
             timings=timing_points,
             questions=questions,
             show_teacher_link=True,
+            teacher_nav_mode=True,
         )
 
     return app

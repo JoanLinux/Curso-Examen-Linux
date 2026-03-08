@@ -363,7 +363,7 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   border-radius: 10px;
   padding: 8px;
   background: #f4f9ff;
-  overflow-x: hidden;
+  overflow: visible;
 }
 #riskBox .resp-item {
   max-width: 100%;
@@ -376,10 +376,13 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   text-overflow: ellipsis;
 }
 @media (min-width: 901px) {
-  #riskBox {
-    max-height: 130px;
-    min-height: 96px;
-    overflow: auto;
+  #riskBox,
+  #responsesBox,
+  #distrosBox,
+  #timingsBox,
+  #kpisBox {
+    max-height: none;
+    overflow: visible;
   }
 }
 .teacher-brand-logos {

@@ -6,9 +6,11 @@ import os
 import random
 import re
 import sqlite3
+import statistics
 import time
 import unicodedata
 import uuid
+from collections import defaultdict
 from hmac import compare_digest
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
+from ml_insights import build_ml_risk
 
 BASE_DIR = Path(__file__).resolve().parent
 INSTANCE_DIR = BASE_DIR / "instance"
@@ -65,6 +68,77 @@ DISTRO_ROTATION = [
     {"name": "Rocky Linux", "image": "rocky.svg"},
     {"name": "AlmaLinux", "image": "almalinux.svg"},
 ]
+
+DEFAULT_TOPIC = "General Linux"
+
+
+def topic_for_item_id(item_id: str) -> str:
+    iid = (item_id or "").lower()
+    if iid.startswith("shell_") or iid.startswith("cmd_"):
+        if "cups" in iid:
+            return "Servicios de impresion (CUPS)"
+        if "fw_" in iid or "firewall" in iid:
+            return "Firewall y seguridad"
+        if "chmod" in iid or "chown" in iid:
+            return "Permisos y propiedad"
+        if "cron" in iid:
+            return "Tareas programadas (cron)"
+        if "pkg_" in iid or "apt" in iid or "dpkg" in iid:
+            return "Gestion de paquetes"
+        if "net_" in iid or iid.endswith("ss_listen") or "ss_" in iid:
+            return "Redes"
+        if "proc_" in iid or "ps_" in iid or "top" in iid or "htop" in iid:
+            return "Procesos y rendimiento"
+        if "journal" in iid or "log" in iid or "grep" in iid or "tail" in iid or "head" in iid:
+            return "Logs y diagnostico"
+        if "tar" in iid or "respaldo" in iid or "rsync" in iid:
+            return "Respaldo y restauracion"
+        if "find" in iid or "cat_" in iid or "mv_" in iid or "df_" in iid or "du_" in iid:
+            return "Archivos y filesystem"
+        if "shadow" in iid or "whoami" in iid or "last" in iid or "user_" in iid:
+            return "Usuarios y cuentas"
+        return "Comandos de shell"
+    if iid.startswith("hist_"):
+        return "Historia y arquitectura Linux"
+    if iid.startswith("img_"):
+        return "Analisis visual (top/htop)"
+    if iid.startswith("s3_"):
+        return "Operacion y metodologia"
+    return DEFAULT_TOPIC
+
+
+def command_base(cmd: str) -> str:
+    c = (cmd or "").strip()
+    if not c:
+        return ""
+    p = c.split()
+    if not p:
+        return ""
+    if p[0] == "sudo" and len(p) > 1:
+        return p[1].lower()
+    return p[0].lower()
+
+
+def classify_error_severity(item_type: str, item_id: str, user_answer: str, expected: str, command_trace: Optional[List[str]] = None) -> str:
+    if item_type != "shell":
+        return "conceptual"
+    exp_base = command_base(expected)
+    if not exp_base:
+        return "conceptual"
+    attempts = [str(x).strip() for x in (command_trace or []) if str(x).strip()]
+    if user_answer:
+        attempts.append(user_answer)
+    for a in attempts:
+        if command_base(a) == exp_base:
+            return "sintaxis"
+    return "conceptual"
+
+
+def student_key_for_cycle(student_name: str, student_email: str) -> str:
+    email = (student_email or "").strip().lower()
+    if email:
+        return f"email:{email}"
+    return f"name:{normalize_key(student_name or '').strip()}"
 
 COMMAND_QUESTIONS = [
     {
@@ -1158,6 +1232,26 @@ def init_db() -> None:
                 saved_by TEXT NOT NULL,
                 snapshot_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS response_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_token TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                item_id TEXT NOT NULL,
+                attempt_no INTEGER NOT NULL,
+                user_answer TEXT NOT NULL,
+                is_correct INTEGER NOT NULL,
+                submitted_at TEXT NOT NULL,
+                FOREIGN KEY(session_token) REFERENCES exam_sessions(session_token)
+            );
+
+            CREATE TABLE IF NOT EXISTS student_item_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_key TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                seen_at TEXT NOT NULL,
+                UNIQUE(student_key, item_id)
+            );
             """
         )
         cols = conn.execute("PRAGMA table_info(exam_sessions)").fetchall()
@@ -1178,7 +1272,32 @@ def init_db() -> None:
             conn.execute("ALTER TABLE responses ADD COLUMN extra_text TEXT NOT NULL DEFAULT ''")
 
 
-def build_exam() -> List[Dict]:
+def _prefer_unseen(pool: List[Dict], seen_ids: set, k: int) -> List[Dict]:
+    if k <= 0 or not pool:
+        return []
+    unseen = [q for q in pool if q.get("id") not in seen_ids]
+    if len(unseen) >= k:
+        return random.sample(unseen, k=k)
+    # Si ya se agotaron en el ciclo, se reutiliza el pool completo.
+    if len(pool) <= k:
+        return random.sample(pool, k=len(pool))
+    chosen = unseen[:]
+    remaining = k - len(chosen)
+    used_ids = {q.get("id") for q in chosen}
+    fallback = [q for q in pool if q.get("id") not in used_ids]
+    chosen.extend(random.sample(fallback, k=min(remaining, len(fallback))))
+    return chosen
+
+
+def build_exam(student_key: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> List[Dict]:
+    seen_ids = set()
+    if student_key and conn is not None:
+        rows = conn.execute(
+            "SELECT item_id FROM student_item_history WHERE student_key = ?",
+            (student_key,),
+        ).fetchall()
+        seen_ids = {r["item_id"] for r in rows}
+
     cups_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_cups_")]
     fw_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_fw_")]
     chmod_num_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_chmod_num_")]
@@ -1194,30 +1313,30 @@ def build_exam() -> List[Dict]:
     kernel_hist = [q for q in HISTORY_QUESTIONS if q["id"].startswith("hist_kernel_")]
     other_hist = [q for q in HISTORY_QUESTIONS if not q["id"].startswith("hist_kernel_")]
 
-    command = []
+    command: List[Dict] = []
     if cups_cmd:
-        command.append(random.choice(cups_cmd))
+        command.extend(_prefer_unseen(cups_cmd, seen_ids, 1))
     if fw_cmd:
-        command.append(random.choice(fw_cmd))
+        command.extend(_prefer_unseen(fw_cmd, seen_ids, 1))
     if chmod_num_cmd:
-        command.append(random.choice(chmod_num_cmd))
+        command.extend(_prefer_unseen(chmod_num_cmd, seen_ids, 1))
     if pkg_cmd:
-        command.append(random.choice(pkg_cmd))
+        command.extend(_prefer_unseen(pkg_cmd, seen_ids, 1))
     remaining_cmd = max(0, min(12, len(COMMAND_QUESTIONS)) - len(command))
     pool_cmd = [q for q in other_cmd if q not in command]
     if pool_cmd and remaining_cmd > 0:
-        command.extend(random.sample(pool_cmd, k=min(remaining_cmd, len(pool_cmd))))
+        command.extend(_prefer_unseen(pool_cmd, seen_ids, min(remaining_cmd, len(pool_cmd))))
 
     history = []
     if kernel_hist:
-        history.append(random.choice(kernel_hist))
+        history.extend(_prefer_unseen(kernel_hist, seen_ids, 1))
     remaining_hist = max(0, min(3, len(HISTORY_QUESTIONS)) - len(history))
     pool_hist = [q for q in other_hist if q not in history]
     if pool_hist and remaining_hist > 0:
-        history.extend(random.sample(pool_hist, k=min(remaining_hist, len(pool_hist))))
+        history.extend(_prefer_unseen(pool_hist, seen_ids, min(remaining_hist, len(pool_hist))))
 
-    session3 = random.sample(SESSION3_IMAGE_QUESTIONS, k=min(4, len(SESSION3_IMAGE_QUESTIONS)))
-    images = random.sample(IMAGE_QUESTIONS, k=min(2, len(IMAGE_QUESTIONS)))
+    session3 = _prefer_unseen(SESSION3_IMAGE_QUESTIONS, seen_ids, min(4, len(SESSION3_IMAGE_QUESTIONS)))
+    images = _prefer_unseen(IMAGE_QUESTIONS, seen_ids, min(2, len(IMAGE_QUESTIONS)))
     cat_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_cat_")]
     df_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_df_")]
     mv_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_mv_")]
@@ -1230,16 +1349,16 @@ def build_exam() -> List[Dict]:
     ]
     shell = []
     if cat_shell:
-        shell.append(random.choice(cat_shell))
+        shell.extend(_prefer_unseen(cat_shell, seen_ids, 1))
     if df_shell:
-        shell.append(random.choice(df_shell))
+        shell.extend(_prefer_unseen(df_shell, seen_ids, 1))
     if mv_shell:
-        shell.append(random.choice(mv_shell))
+        shell.extend(_prefer_unseen(mv_shell, seen_ids, 1))
     remaining_shell = max(0, min(8, len(SHELL_EXERCISES)) - len(shell))
     blocked_shell_ids = {"shell_shadow_hashes"} if cat_shell else set()
     pool_shell = [q for q in other_shell if q not in shell and q["id"] not in blocked_shell_ids]
     if pool_shell and remaining_shell > 0:
-        shell.extend(random.sample(pool_shell, k=min(remaining_shell, len(pool_shell))))
+        shell.extend(_prefer_unseen(pool_shell, seen_ids, min(remaining_shell, len(pool_shell))))
     items = command + history + session3 + images + shell
     randomized_items: List[Dict] = []
     for base_item in items:
@@ -1255,6 +1374,20 @@ def build_exam() -> List[Dict]:
                     break
         randomized_items.append(item)
     random.shuffle(randomized_items)
+
+    if student_key and conn is not None:
+        now = utcnow_iso()
+        for it in randomized_items:
+            iid = (it.get("id") or "").strip()
+            if not iid:
+                continue
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO student_item_history (student_key, item_id, seen_at)
+                VALUES (?, ?, ?)
+                """,
+                (student_key, iid, now),
+            )
     return randomized_items
 
 
@@ -1469,7 +1602,8 @@ def create_app() -> Flask:
                 return redirect(url_for("exam_page", token=existing["session_token"]))
 
             token = str(uuid.uuid4())
-            items = build_exam()
+            student_key = student_key_for_cycle(student_name, student_email)
+            items = build_exam(student_key=student_key, conn=conn)
             conn.execute(
                 """
                 INSERT INTO exam_sessions
@@ -1651,6 +1785,18 @@ def create_app() -> Flask:
             ).fetchone()
 
             is_correct, feedback, expected = evaluate_item(item, answer, command_trace_list)
+            attempt_no_row = conn.execute(
+                "SELECT COALESCE(MAX(attempt_no), 0) AS n FROM response_attempts WHERE session_token = ? AND item_index = ?",
+                (token, idx),
+            ).fetchone()
+            attempt_no = int((attempt_no_row["n"] if attempt_no_row else 0) or 0) + 1
+            conn.execute(
+                """
+                INSERT INTO response_attempts (session_token, item_index, item_id, attempt_no, user_answer, is_correct, submitted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (token, idx, item["id"], attempt_no, answer, 1 if is_correct else 0, utcnow_iso()),
+            )
             next_index = idx + 1
             completed = 1 if next_index >= row["total_items"] else 0
             max_reached = int(row["max_reached_index"] or 0)
@@ -1733,6 +1879,7 @@ def create_app() -> Flask:
                 SELECT
                     s.session_token,
                     s.student_name,
+                    s.student_email,
                     s.started_at,
                     s.finished_at,
                     s.current_index,
@@ -1752,13 +1899,22 @@ def create_app() -> Flask:
                 """
             ).fetchall()
 
-            responses = conn.execute(
+            responses_latest = conn.execute(
                 """
-                SELECT r.session_token, s.student_name, r.item_index, r.item_type, r.prompt, r.user_answer, r.distro_guess, r.command_trace, r.extra_text, r.is_correct, r.submitted_at
+                SELECT r.session_token, s.student_name, s.student_email, r.item_index, r.item_id, r.item_type, r.prompt, r.user_answer, r.distro_guess, r.command_trace, r.extra_text, r.is_correct, r.expected, r.submitted_at
                 FROM responses r
                 JOIN exam_sessions s ON s.session_token = r.session_token
                 ORDER BY r.submitted_at DESC
                 LIMIT 100
+                """
+            ).fetchall()
+
+            responses_all = conn.execute(
+                """
+                SELECT r.session_token, s.student_name, s.student_email, r.item_index, r.item_id, r.item_type, r.prompt, r.user_answer, r.distro_guess, r.command_trace, r.extra_text, r.is_correct, r.expected, r.submitted_at
+                FROM responses r
+                JOIN exam_sessions s ON s.session_token = r.session_token
+                ORDER BY r.submitted_at DESC
                 """
             ).fetchall()
 
@@ -1768,6 +1924,14 @@ def create_app() -> Flask:
                 FROM question_timing t
                 JOIN exam_sessions s ON s.session_token = t.session_token
                 ORDER BY s.started_at DESC, t.item_index ASC
+                """
+            ).fetchall()
+
+            attempts = conn.execute(
+                """
+                SELECT session_token, item_index, attempt_no, is_correct
+                FROM response_attempts
+                ORDER BY session_token, item_index, attempt_no
                 """
             ).fetchall()
 
@@ -1797,15 +1961,18 @@ def create_app() -> Flask:
             d.pop("exam_payload", None)
             session_data.append(d)
 
+        timing_map: Dict[Tuple[str, int], int] = {}
         timing_data = []
         for t in timings:
             d = dict(t)
             extra = elapsed_seconds(d["last_entered_at"], now_iso) if d.get("last_entered_at") else 0
             d["seconds_total"] = int(float(d["seconds_spent"]) + extra)
+             # key por sesion/pregunta para KPIs
+            timing_map[(d["session_token"], int(d["item_index"]))] = d["seconds_total"]
             timing_data.append(d)
 
         response_data = []
-        for r in responses:
+        for r in responses_latest:
             d = dict(r)
             idx = int(d.get("item_index") or 0)
             if DISTRO_ROTATION:
@@ -1825,7 +1992,221 @@ def create_app() -> Flask:
                 d["distro_image_name"] = ""
                 d["distro_image_url"] = ""
                 d["distro_guess_match"] = False
+            d["topic"] = topic_for_item_id(d.get("item_id", ""))
+            trace_list = []
+            trace_raw = d.get("command_trace")
+            if isinstance(trace_raw, str) and trace_raw:
+                try:
+                    parsed = json.loads(trace_raw)
+                    if isinstance(parsed, list):
+                        trace_list = [str(x) for x in parsed]
+                except Exception:
+                    trace_list = []
+            d["error_severity"] = classify_error_severity(
+                d.get("item_type", ""),
+                d.get("item_id", ""),
+                d.get("user_answer", ""),
+                d.get("expected", ""),
+                trace_list,
+            ) if not d.get("is_correct") else "none"
             response_data.append(d)
+
+        topic_stats: Dict[str, Dict] = defaultdict(lambda: {"total": 0, "correct": 0, "times": [], "syntax": 0, "conceptual": 0})
+        student_stats: Dict[str, Dict] = defaultdict(
+            lambda: {
+                "student_name": "",
+                "student_email": "",
+                "total": 0,
+                "correct": 0,
+                "times": [],
+                "resets": 0,
+                "dropouts": 0,
+                "syntax_err": 0,
+                "conceptual_err": 0,
+                "topic": defaultdict(lambda: {"total": 0, "correct": 0}),
+            }
+        )
+
+        for s in session_data:
+            skey = student_key_for_cycle(s.get("student_name", ""), s.get("student_email", ""))
+            st = student_stats[skey]
+            st["student_name"] = s.get("student_name", "")
+            st["student_email"] = s.get("student_email", "")
+            st["resets"] += int(s.get("resets_count") or 0)
+            # abandono: sesiones no completadas con >10 min transcurridos
+            if not s.get("completed") and int(s.get("elapsed_seconds") or 0) >= 600:
+                st["dropouts"] += 1
+
+        for r in responses_all:
+            d = dict(r)
+            item_id = d.get("item_id", "")
+            topic = topic_for_item_id(item_id)
+            sess = d.get("session_token", "")
+            qidx = int(d.get("item_index") or 0)
+            is_correct = int(d.get("is_correct") or 0) == 1
+            topic_stats[topic]["total"] += 1
+            topic_stats[topic]["correct"] += 1 if is_correct else 0
+            sec = timing_map.get((sess, qidx))
+            if sec is not None:
+                topic_stats[topic]["times"].append(sec)
+            trace_list = []
+            trace_raw = d.get("command_trace")
+            if isinstance(trace_raw, str) and trace_raw:
+                try:
+                    parsed = json.loads(trace_raw)
+                    if isinstance(parsed, list):
+                        trace_list = [str(x) for x in parsed]
+                except Exception:
+                    trace_list = []
+            sev = classify_error_severity(
+                d.get("item_type", ""),
+                item_id,
+                d.get("user_answer", ""),
+                d.get("expected", ""),
+                trace_list,
+            ) if not is_correct else "none"
+            if sev == "sintaxis":
+                topic_stats[topic]["syntax"] += 1
+            elif sev == "conceptual":
+                topic_stats[topic]["conceptual"] += 1
+
+            skey = student_key_for_cycle(d.get("student_name", ""), d.get("student_email", ""))
+            st = student_stats[skey]
+            st["student_name"] = d.get("student_name", "")
+            st["student_email"] = d.get("student_email", "")
+            st["total"] += 1
+            st["correct"] += 1 if is_correct else 0
+            if sec is not None:
+                st["times"].append(sec)
+            st["topic"][topic]["total"] += 1
+            st["topic"][topic]["correct"] += 1 if is_correct else 0
+            if sev == "sintaxis":
+                st["syntax_err"] += 1
+            elif sev == "conceptual":
+                st["conceptual_err"] += 1
+
+        attempt_groups: Dict[Tuple[str, int], List[Dict]] = defaultdict(list)
+        for a in attempts:
+            dd = dict(a)
+            attempt_groups[(dd["session_token"], int(dd["item_index"]))].append(dd)
+        second_fix_den = 0
+        second_fix_ok = 0
+        for _, group in attempt_groups.items():
+            group = sorted(group, key=lambda x: int(x.get("attempt_no") or 0))
+            if len(group) < 2:
+                continue
+            first_bad = int(group[0].get("is_correct") or 0) == 0
+            second_good = int(group[1].get("is_correct") or 0) == 1
+            if first_bad:
+                second_fix_den += 1
+                if second_good:
+                    second_fix_ok += 1
+
+        topic_precision = []
+        topic_median_time = []
+        severity_conceptual = 0
+        severity_syntax = 0
+        for topic, st in topic_stats.items():
+            total = int(st["total"] or 0)
+            correct = int(st["correct"] or 0)
+            acc = (correct / total * 100.0) if total else 0.0
+            topic_precision.append({"topic": topic, "precision_pct": round(acc, 2), "total": total})
+            med_t = int(statistics.median(st["times"])) if st["times"] else 0
+            topic_median_time.append({"topic": topic, "median_seconds": med_t})
+            severity_conceptual += int(st["conceptual"] or 0)
+            severity_syntax += int(st["syntax"] or 0)
+
+        topic_precision.sort(key=lambda x: (x["precision_pct"], -x["total"]))
+        topic_median_time.sort(key=lambda x: x["median_seconds"], reverse=True)
+
+        # Progreso acumulado por alumno (mejora entre primer y ultimo intento completado)
+        attempts_by_student: Dict[str, List[Dict]] = defaultdict(list)
+        for s in session_data:
+            skey = student_key_for_cycle(s.get("student_name", ""), s.get("student_email", ""))
+            attempts_by_student[skey].append(s)
+        student_progress = []
+        for skey, rows in attempts_by_student.items():
+            rows_sorted = sorted(rows, key=lambda x: x.get("started_at") or "")
+            completed_rows = [x for x in rows_sorted if x.get("completed")]
+            first_pct = 0.0
+            last_pct = 0.0
+            improvement = 0.0
+            if completed_rows:
+                first = completed_rows[0]
+                last = completed_rows[-1]
+                first_total = max(1, int(first.get("total_items") or 0))
+                last_total = max(1, int(last.get("total_items") or 0))
+                first_pct = float(first.get("score") or 0) / first_total * 100.0
+                last_pct = float(last.get("score") or 0) / last_total * 100.0
+                improvement = last_pct - first_pct
+            st = student_stats.get(skey) or {}
+            weak_topic = ""
+            weak_pct = 100.0
+            for topic, tstat in (st.get("topic") or {}).items():
+                t_total = int(tstat.get("total") or 0)
+                if t_total <= 0:
+                    continue
+                t_pct = float(tstat.get("correct") or 0) / t_total * 100.0
+                if t_pct < weak_pct:
+                    weak_pct = t_pct
+                    weak_topic = topic
+            student_progress.append(
+                {
+                    "student_key": skey,
+                    "student_name": rows_sorted[-1].get("student_name", "") if rows_sorted else "",
+                    "student_email": rows_sorted[-1].get("student_email", "") if rows_sorted else "",
+                    "attempts_total": len(rows_sorted),
+                    "attempts_completed": len(completed_rows),
+                    "latest_score_pct": round(last_pct, 2),
+                    "first_score_pct": round(first_pct, 2),
+                    "improvement_pct": round(improvement, 2),
+                    "weakest_topic": weak_topic or DEFAULT_TOPIC,
+                    "weakest_topic_precision_pct": round(weak_pct if weak_topic else 0.0, 2),
+                }
+            )
+
+        student_feature_rows = []
+        for sp in student_progress:
+            skey = sp["student_key"]
+            st = student_stats.get(skey) or {}
+            total = int(st.get("total") or 0)
+            correct = int(st.get("correct") or 0)
+            wrong_rate = (1.0 - (correct / total)) if total else 1.0
+            median_time_topic = float(statistics.median(st.get("times") or [0])) if (st.get("times") or []) else 0.0
+            syntax_err = int(st.get("syntax_err") or 0)
+            conceptual_err = int(st.get("conceptual_err") or 0)
+            err_total = max(1, syntax_err + conceptual_err)
+            syntax_ratio = float(syntax_err) / float(err_total)
+            student_feature_rows.append(
+                {
+                    "student_key": skey,
+                    "wrong_rate": wrong_rate,
+                    "median_time_topic": median_time_topic,
+                    "resets": int(st.get("resets") or 0),
+                    "dropouts": int(st.get("dropouts") or 0),
+                    "syntax_error_ratio": syntax_ratio,
+                }
+            )
+
+        ml_risk = build_ml_risk(student_feature_rows)
+        for sp in student_progress:
+            pred = ml_risk.get(sp["student_key"], {"risk_prob": 0.0, "risk_level": "bajo", "model": "heuristic"})
+            sp["risk_prob"] = round(float(pred.get("risk_prob") or 0.0), 3)
+            sp["risk_level"] = pred.get("risk_level", "bajo")
+            sp["risk_model"] = pred.get("model", "heuristic")
+
+        student_progress.sort(key=lambda x: (-x["risk_prob"], x["latest_score_pct"]))
+
+        kpis = {
+            "precision_by_topic": topic_precision,
+            "median_time_by_topic": topic_median_time,
+            "second_attempt_fix_rate_pct": round((second_fix_ok / second_fix_den * 100.0), 2) if second_fix_den else 0.0,
+            "second_attempt_fix_cases": {"fixed": second_fix_ok, "total": second_fix_den},
+            "restarts_total": int(sum(int(s.get("resets_count") or 0) for s in session_data)),
+            "dropouts_total": int(sum(1 for s in session_data if (not s.get("completed")) and int(s.get("elapsed_seconds") or 0) >= 600)),
+            "error_severity": {"conceptual": severity_conceptual, "sintaxis": severity_syntax},
+            "students_needing_support": [x for x in student_progress if x.get("risk_level") in {"alto", "medio"}][:20],
+        }
 
         return jsonify(
             {
@@ -1833,6 +2214,9 @@ def create_app() -> Flask:
                 "responses": response_data,
                 "distros": [x for x in response_data if (x.get("distro_guess") or "").strip()],
                 "timings": timing_data,
+                "kpis": kpis,
+                "student_progress": student_progress,
+                "ml_risk": student_progress[:20],
                 "server_time": utcnow_iso(),
             }
         )
@@ -1850,8 +2234,13 @@ def create_app() -> Flask:
             if not row:
                 return jsonify({"error": "Sesion no encontrada"}), 404
 
-            new_items = build_exam()
-            current_idx = int(conn.execute("SELECT current_index FROM exam_sessions WHERE session_token = ?", (token,)).fetchone()["current_index"])
+            session_meta = conn.execute(
+                "SELECT student_name, student_email, current_index FROM exam_sessions WHERE session_token = ?",
+                (token,),
+            ).fetchone()
+            student_key = student_key_for_cycle(session_meta["student_name"], session_meta["student_email"]) if session_meta else ""
+            new_items = build_exam(student_key=student_key, conn=conn)
+            current_idx = int(session_meta["current_index"]) if session_meta else 0
             leave_question(conn, token, current_idx)
             conn.execute("DELETE FROM responses WHERE session_token = ?", (token,))
             conn.execute("DELETE FROM question_timing WHERE session_token = ?", (token,))

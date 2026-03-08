@@ -39,6 +39,10 @@
     <div class="responses" id="distrosBox"></div>
     <h2 style="margin-top:14px;">Tiempo por Pregunta</h2>
     <div class="responses" id="timingsBox"></div>
+    <h2 style="margin-top:14px;">KPIs</h2>
+    <div class="responses" id="kpisBox"></div>
+    <h2 style="margin-top:14px;">Alumnos con apoyo</h2>
+    <div class="responses" id="riskBox"></div>
   </article>
 </section>
 
@@ -46,6 +50,15 @@
 const resetBaseUrl = "{{ url_for('teacher_reset_exam', token='__TOKEN__') }}";
 const deleteBaseUrl = "{{ url_for('teacher_delete_exam', token='__TOKEN__') }}";
 const saveBaseUrl = "{{ url_for('teacher_save_exam', token='__TOKEN__') }}";
+
+function esc(v) {
+  return String(v ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 function fmtSeconds(total) {
   const s = Math.max(0, Number(total || 0));
@@ -65,10 +78,10 @@ async function refreshDashboard() {
   body.innerHTML = data.sessions.map(s => {
     const status = s.completed ? 'Finalizado' : 'En curso';
     return `<tr>
-      <td>${s.student_name}</td>
-      <td>${s.current_index}/${s.total_items}</td>
+      <td>${esc(s.student_name)}</td>
+      <td>${Number(s.current_index || 0)}/${Number(s.total_items || 0)}</td>
       <td>#${s.current_question_number || s.current_index}</td>
-      <td>${s.score}/${s.total_items}</td>
+      <td>${Number(s.score || 0)}/${Number(s.total_items || 0)}</td>
       <td>${fmtSeconds(s.elapsed_seconds)}</td>
       <td>${s.resets_count || 0}</td>
       <td>${status}</td>
@@ -83,12 +96,13 @@ async function refreshDashboard() {
   const box = document.getElementById('responsesBox');
   box.innerHTML = data.responses.map(r => `
     <div class="resp-item ${r.is_correct ? 'ok' : 'bad'}">
-      <div><strong>${r.student_name}</strong> - ${r.item_type.toUpperCase()} #${r.item_index + 1}</div>
-      <div class="small">${r.prompt}</div>
-      <div class="cmd">Respuesta: ${r.user_answer}</div>
-      <div class="small">Texto libre: ${r.extra_text || '-'}</div>
-      <div class="small">Distro: ${r.distro_guess || '-'}</div>
-      <div class="small">Imagen distro: ${r.distro_image_name || '-'}</div>
+      <div><strong>${esc(r.student_name)}</strong> - ${esc((r.item_type || '').toUpperCase())} #${Number(r.item_index) + 1}</div>
+      <div class="small">${esc(r.prompt)}</div>
+      <div class="cmd">Respuesta: ${esc(r.user_answer)}</div>
+      <div class="small">Texto libre: ${esc(r.extra_text || '-')}</div>
+      <div class="small">Distro: ${esc(r.distro_guess || '-')}</div>
+      <div class="small">Imagen distro: ${esc(r.distro_image_name || '-')}</div>
+      <div class="small">Tema: ${esc(r.topic || '-')} | Error: ${esc(r.error_severity || 'none')}</div>
       <div class="small">${r.is_correct ? 'Correcta' : 'Incorrecta'} - ${r.submitted_at} UTC</div>
     </div>
   `).join('');
@@ -98,9 +112,9 @@ async function refreshDashboard() {
   db.innerHTML = distros.map((d, i) => `
     <div class="resp-item">
       <div><strong>Distros ${i + 1} de ${distros.length}</strong></div>
-      <div class="small"><strong>${d.student_name}</strong> - Pregunta #${Number(d.item_index) + 1}</div>
-      <div class="cmd">Respuesta distro: ${d.distro_guess}</div>
-      <div class="small">Esperado: ${d.distro_expected_name || '-'} (${d.distro_image_name || '-'})</div>
+      <div class="small"><strong>${esc(d.student_name)}</strong> - Pregunta #${Number(d.item_index) + 1}</div>
+      <div class="cmd">Respuesta distro: ${esc(d.distro_guess)}</div>
+      <div class="small">Esperado: ${esc(d.distro_expected_name || '-')} (${esc(d.distro_image_name || '-')})</div>
       <div class="small">Validacion: ${d.distro_guess_match ? 'Coincide' : 'No coincide'}</div>
       <div class="small">${d.submitted_at} UTC</div>
     </div>
@@ -109,10 +123,42 @@ async function refreshDashboard() {
   const tb = document.getElementById('timingsBox');
   tb.innerHTML = (data.timings || []).map(t => `
     <div class="resp-item">
-      <div><strong>${t.student_name}</strong> - Pregunta #${Number(t.item_index) + 1}</div>
+      <div><strong>${esc(t.student_name)}</strong> - Pregunta #${Number(t.item_index) + 1}</div>
       <div class="small">Tiempo acumulado: <strong>${fmtSeconds(t.seconds_total)}</strong></div>
     </div>
   `).join('');
+
+  const k = data.kpis || {};
+  const pTopics = (k.precision_by_topic || []).slice(0, 8);
+  const tTopics = (k.median_time_by_topic || []).slice(0, 8);
+  const kpisBox = document.getElementById('kpisBox');
+  kpisBox.innerHTML = `
+    <div class="resp-item">
+      <div><strong>2do intento corrige</strong>: ${Number(k.second_attempt_fix_rate_pct || 0).toFixed(2)}%</div>
+      <div class="small">Casos: ${(k.second_attempt_fix_cases || {}).fixed || 0}/${(k.second_attempt_fix_cases || {}).total || 0}</div>
+      <div class="small">Reinicios: ${k.restarts_total || 0} | Abandonos: ${k.dropouts_total || 0}</div>
+      <div class="small">Errores conceptual/sintaxis: ${(k.error_severity || {}).conceptual || 0}/${(k.error_severity || {}).sintaxis || 0}</div>
+    </div>
+    <div class="resp-item">
+      <div><strong>Precision por tema</strong></div>
+      ${pTopics.map(x => `<div class="small">${esc(x.topic)}: <strong>${Number(x.precision_pct || 0).toFixed(2)}%</strong> (${x.total || 0})</div>`).join('') || '<div class="small">Sin datos.</div>'}
+    </div>
+    <div class="resp-item">
+      <div><strong>Tiempo mediano por tema</strong></div>
+      ${tTopics.map(x => `<div class="small">${esc(x.topic)}: <strong>${fmtSeconds(x.median_seconds || 0)}</strong></div>`).join('') || '<div class="small">Sin datos.</div>'}
+    </div>
+  `;
+
+  const riskList = data.student_progress || [];
+  const riskBox = document.getElementById('riskBox');
+  riskBox.innerHTML = riskList.slice(0, 20).map(sp => `
+    <div class="resp-item ${sp.risk_level === 'alto' ? 'bad' : (sp.risk_level === 'medio' ? 'warn' : 'ok')}">
+      <div><strong>${esc(sp.student_name || '-')}</strong> (${esc(sp.student_email || '-')})</div>
+      <div class="small">Riesgo: <strong>${esc(sp.risk_level || 'bajo')}</strong> (${Number(sp.risk_prob || 0).toFixed(3)}) - Modelo: ${esc(sp.risk_model || 'heuristic')}</div>
+      <div class="small">Intentos: ${sp.attempts_completed || 0}/${sp.attempts_total || 0} | Mejora: ${Number(sp.improvement_pct || 0).toFixed(2)}%</div>
+      <div class="small">Ultimo score: ${Number(sp.latest_score_pct || 0).toFixed(2)}% | Tema debil: ${esc(sp.weakest_topic || '-')} (${Number(sp.weakest_topic_precision_pct || 0).toFixed(2)}%)</div>
+    </div>
+  `).join('') || '<div class="small">Sin datos acumulados por alumno.</div>';
 
   document.querySelectorAll('.reset-btn').forEach(btn => {
     btn.addEventListener('click', async () => {

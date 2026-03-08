@@ -349,6 +349,7 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   background: #fbfdff;
 }
 .resp-item.ok { border-left-color: var(--accent); }
+.resp-item.warn { border-left-color: #d97706; }
 .resp-item.bad { border-left-color: var(--bad); }
 .small { color: var(--muted); font-size: 12px; }
 .cmd { font-family: Consolas, "Courier New", monospace; margin: 6px 0; }

@@ -320,7 +320,7 @@ button:hover { filter: brightness(1.07); }
 
 @media (min-width: 901px) {
   body.teacher-wide .teacher-layout.grid-3 {
-    grid-template-columns: 140px minmax(620px, 1.35fr) minmax(700px, 1.65fr);
+    grid-template-columns: 210px minmax(640px, 1.5fr) minmax(520px, 1.1fr);
   }
   body.teacher-wide .logos-col {
     padding: 10px;

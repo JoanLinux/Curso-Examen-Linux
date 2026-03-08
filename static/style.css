@@ -356,6 +356,17 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   border-radius: 10px;
   padding: 8px;
   background: #f4f9ff;
+  overflow-x: hidden;
+}
+#riskBox .resp-item {
+  max-width: 100%;
+  overflow: hidden;
+}
+#riskBox .resp-item > div {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 @media (min-width: 901px) {
   #riskBox {

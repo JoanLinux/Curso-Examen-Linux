@@ -34,6 +34,7 @@
   <div class="time-chart">
     <div class="bar-chart-vertical" id="questionBars"></div>
   </div>
+  <div class="responses" id="slowQuestionsBox" style="margin-top:8px;"></div>
 
   <h2 style="margin-top:14px;">Historial de intentos</h2>
   <div class="responses" id="attemptsBox"></div>
@@ -119,14 +120,26 @@ async function loadDetail(studentKey) {
   const maxT = Math.max(1, ...qTimes.map(x => Number(x.seconds_total || 0)));
   document.getElementById('questionBars').innerHTML = qTimes.map(x => {
     const h = (Number(x.seconds_total || 0) / maxT) * 100;
+    const prompt = String(x.prompt || '').trim();
+    const title = `${x.item_id || 'sin_id'} | ${x.topic || '-'} | ${prompt}`;
     return `
       <div class="vbar-col">
-        <div class="vbar-track"><div class="vbar-fill" style="height:${h.toFixed(2)}%;"></div></div>
+        <div class="vbar-track" title="${esc(title)}"><div class="vbar-fill" style="height:${h.toFixed(2)}%;"></div></div>
         <div class="vbar-label">P${Number(x.question_number || 0)}</div>
         <div class="vbar-value">${Number(x.seconds_total || 0)}s</div>
       </div>
     `;
   }).join('') || '<div class="small">Sin datos de tiempo por pregunta.</div>';
+
+  const slow = [...qTimes].sort((a, b) => Number(b.seconds_total || 0) - Number(a.seconds_total || 0));
+  document.getElementById('slowQuestionsBox').innerHTML = slow.map((x, i) => `
+    <div class="resp-item">
+      <div><strong>#${i + 1}</strong> P${Number(x.question_number || 0)} - <code>${esc(x.item_id || 'sin_id')}</code></div>
+      <div class="small">${esc(x.topic || '-')}</div>
+      <div class="small">${esc(x.prompt || '-')}</div>
+      <div class="small"><strong>${fmtSeconds(x.seconds_total || 0)}</strong></div>
+    </div>
+  `).join('') || '<div class="small">Sin datos.</div>';
 
   document.getElementById('attemptsBox').innerHTML = (data.attempts_timeline || []).map((a, i) => `
     <div class="resp-item ${a.completed ? 'ok' : 'warn'}">

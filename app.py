@@ -2070,9 +2070,19 @@ def create_app() -> Flask:
 
         latest_session = sessions_sorted[-1]
         latest_token = latest_session["session_token"]
+        latest_response_by_index: Dict[int, Dict] = {}
+        for r in responses:
+            if r.get("session_token") != latest_token:
+                continue
+            idx = int(r.get("item_index") or 0)
+            latest_response_by_index[idx] = r
         latest_timing = [
             {
                 "question_number": int(t["item_index"]) + 1,
+                "item_index": int(t["item_index"]),
+                "item_id": (latest_response_by_index.get(int(t["item_index"])) or {}).get("item_id", ""),
+                "topic": (latest_response_by_index.get(int(t["item_index"])) or {}).get("topic", DEFAULT_TOPIC),
+                "prompt": (latest_response_by_index.get(int(t["item_index"])) or {}).get("prompt", ""),
                 "seconds_total": int(t["seconds_total"]),
             }
             for t in timing_rows

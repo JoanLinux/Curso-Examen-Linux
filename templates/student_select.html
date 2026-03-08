@@ -1,0 +1,17 @@
+﻿{% extends 'base.html' %}
+{% block content %}
+<section class="card narrow">
+  <h1>Seleccion de Alumno</h1>
+  <p>Ingresa tus datos para entrar a la clase y responder el examen practico de Linux.</p>
+  {% if error %}
+    <div class="alert">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="{{ url_for('start_exam') }}" class="form-grid">
+    <label for="student_name">Nombre completo</label>
+    <input id="student_name" name="student_name" type="text" required placeholder="Ej. Francisco Ivan Torres Jimenez">
+    <label for="student_email">Correo</label>
+    <input id="student_email" name="student_email" type="email" required placeholder="ejemplo@correo.com">
+    <button type="submit">Iniciar examen</button>
+  </form>
+</section>
+{% endblock %}

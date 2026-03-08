@@ -1,0 +1,27 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or 'Curso Linux' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-wrap">
+      <div class="brand">Curso Linux - Evaluacion en Vivo</div>
+      <div class="subbrand">Plataforma de clase y examen en tiempo real</div>
+    </div>
+    <nav>
+      <a href="{{ url_for('index') }}">Inicio</a>
+      <a href="{{ url_for('student_page') }}">Alumno</a>
+      {% if show_teacher_link %}
+      <a href="{{ url_for('teacher_page') }}">Profesor</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

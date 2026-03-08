@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <div class="history-head">
+    <h1>Historial de Examenes Guardados</h1>
+    <a class="btn-link" href="{{ url_for('teacher_page') }}">Volver al Dashboard</a>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Alumno</th>
+        <th>Correo</th>
+        <th>Puntaje</th>
+        <th>Tiempo</th>
+        <th>Estado</th>
+        <th>Guardado</th>
+        <th>Accion</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in archives %}
+      <tr>
+        <td>{{ a.id }}</td>
+        <td>{{ a.student_name }}</td>
+        <td>{{ a.student_email }}</td>
+        <td>{{ a.score }}/{{ a.total_items }}</td>
+        <td>{{ a.elapsed_seconds }}s</td>
+        <td>{{ "Finalizado" if a.completed else "En curso" }}</td>
+        <td>{{ a.saved_at }} UTC</td>
+        <td><a class="btn-link" href="{{ url_for('teacher_history_detail_page', archive_id=a.id) }}">Ver detalle</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

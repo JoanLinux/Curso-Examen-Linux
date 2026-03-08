@@ -1,0 +1,1050 @@
+﻿{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <div class="exam-head">
+    <div>
+      <h1>Examen en curso</h1>
+      <p>Alumno: <strong id="studentName">{{ student_name }}</strong></p>
+    </div>
+    <div class="head-metrics">
+      <div class="badge" id="progress">Cargando...</div>
+      <div class="badge timer" id="examTimer">00:00:00</div>
+    </div>
+  </div>
+
+  <div class="exam-workspace">
+    <div id="examContainer"></div>
+    <aside class="question-nav card-lite">
+      <div class="nav-title">Preguntas</div>
+      <div id="questionNav"></div>
+    </aside>
+  </div>
+
+  <div class="actions">
+    <button id="prevBtn" class="secondary" type="button">Pregunta anterior</button>
+    <button id="submitBtn" type="button">Responder y continuar</button>
+  </div>
+
+  <div id="feedback" class="feedback"></div>
+</section>
+
+<script>
+const token = "{{ token }}";
+const stateUrl = "{{ url_for('exam_state', token=token) }}";
+const answerUrl = "{{ url_for('submit_answer', token=token) }}";
+const prevUrl = "{{ url_for('prev_question', token=token) }}";
+const gotoUrl = "{{ url_for('goto_question', token=token) }}";
+const heartbeatUrl = "{{ url_for('exam_heartbeat', token=token) }}";
+const distroMascots = [
+  { name: "Ubuntu", src: "{{ url_for('static', filename='images/distros/ubuntu.svg') }}" },
+  { name: "Debian", src: "{{ url_for('static', filename='images/distros/debian.svg') }}" },
+  { name: "Kali Linux", src: "{{ url_for('static', filename='images/distros/kali.svg') }}" },
+  { name: "Linux Mint", src: "{{ url_for('static', filename='images/distros/mint.svg') }}" },
+  { name: "Arch Linux", src: "{{ url_for('static', filename='images/distros/arch.svg') }}" },
+  { name: "Fedora", src: "{{ url_for('static', filename='images/distros/fedora.svg') }}" },
+  { name: "openSUSE", src: "{{ url_for('static', filename='images/distros/opensuse.svg') }}" },
+  { name: "CentOS", src: "{{ url_for('static', filename='images/distros/centos.svg') }}" },
+  { name: "Manjaro", src: "{{ url_for('static', filename='images/distros/manjaro.svg') }}" },
+  { name: "Gentoo", src: "{{ url_for('static', filename='images/distros/gentoo.svg') }}" },
+  { name: "Slackware", src: "{{ url_for('static', filename='images/distros/slackware.svg') }}" },
+  { name: "MX Linux", src: "{{ url_for('static', filename='images/distros/mxlinux.svg') }}" },
+  { name: "Alpine Linux", src: "{{ url_for('static', filename='images/distros/alpine.svg') }}" },
+  { name: "Rocky Linux", src: "{{ url_for('static', filename='images/distros/rocky.svg') }}" },
+  { name: "AlmaLinux", src: "{{ url_for('static', filename='images/distros/almalinux.svg') }}" }
+];
+const ikusiLogo = "{{ url_for('static', filename='images/ikusi_logo_local.png') }}";
+const satLogo = "{{ url_for('static', filename='images/sat_logo_local.png') }}";
+let state = null;
+let shellHistory = [];
+let shellHistoryIdx = -1;
+let selectedHotspot = '';
+let examStartedAt = null;
+let examFinishedAt = null;
+let timerHandle = null;
+let shellState = null;
+let heartbeatHandle = null;
+let currentQuestionIndex = 0;
+let currentShellCommandLog = [];
+
+function parseUtcTimestamp(ts) {
+  if (!ts) return null;
+  const iso = ts.replace(' ', 'T') + 'Z';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatElapsed(seconds) {
+  const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+  const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function updateTimer() {
+  if (!examStartedAt) return;
+  const endMs = examFinishedAt ? examFinishedAt.getTime() : Date.now();
+  const diff = Math.max(0, Math.floor((endMs - examStartedAt.getTime()) / 1000));
+  document.getElementById('examTimer').textContent = formatElapsed(diff);
+}
+
+function ensureTimer(startedAtText) {
+  const parsed = parseUtcTimestamp(startedAtText);
+  if (!parsed) return;
+  if (!examStartedAt) {
+    examStartedAt = parsed;
+  }
+  if (!timerHandle) {
+    updateTimer();
+    timerHandle = setInterval(updateTimer, 1000);
+  }
+}
+
+function buildQuestionWrap(index, innerHtml) {
+  const mascot = distroMascots[(Math.max(1, index) - 1) % distroMascots.length];
+  const distroGuess = ((state && state.existing_distro_guess) || '').replace(/"/g, '&quot;');
+  return `
+    <div class="question-layout">
+      <div class="question-main">${innerHtml}</div>
+      <aside class="mascot-card">
+        <img src="${mascot.src}" alt="${mascot.name}">
+        <div class="small mascot-name">Sabes cual esta distribucion, ?</div>
+        <input id="distroGuessInput" class="distro-input" type="text" placeholder="Escribe tu respuesta" value="${distroGuess}">
+        <div class="sponsor-strip">
+          <img src="${ikusiLogo}" alt="IKUSI">
+          <img src="${satLogo}" alt="SAT">
+        </div>
+      </aside>
+    </div>`;
+}
+
+function renderState(data) {
+  const wrap = document.getElementById('examContainer');
+  const progress = document.getElementById('progress');
+  const submitBtn = document.getElementById('submitBtn');
+  const prevBtn = document.getElementById('prevBtn');
+  const feedback = document.getElementById('feedback');
+  feedback.textContent = '';
+  ensureTimer(data.started_at);
+  if (typeof data.elapsed_seconds === 'number' && !Number.isNaN(data.elapsed_seconds)) {
+    document.getElementById('examTimer').textContent = formatElapsed(data.elapsed_seconds);
+  }
+  renderQuestionNav(data);
+  const newIndex = Number(data.index || 1);
+  if (newIndex !== currentQuestionIndex) {
+    currentQuestionIndex = newIndex;
+    currentShellCommandLog = Array.isArray(data.existing_command_trace) ? data.existing_command_trace.slice(0, 120) : [];
+  }
+
+  if (data.completed) {
+    examFinishedAt = parseUtcTimestamp(data.finished_at);
+    if (timerHandle) {
+      clearInterval(timerHandle);
+      timerHandle = null;
+    }
+    if (typeof data.elapsed_seconds === 'number' && !Number.isNaN(data.elapsed_seconds)) {
+      document.getElementById('examTimer').textContent = formatElapsed(data.elapsed_seconds);
+    } else {
+      updateTimer();
+    }
+    if (heartbeatHandle) {
+      clearInterval(heartbeatHandle);
+      heartbeatHandle = null;
+    }
+    wrap.innerHTML = buildQuestionWrap(data.index || data.total, `<div class="result">Finalizaste. Puntaje: <strong>${data.score}/${data.total}</strong></div>`);
+    progress.textContent = `Completado`;
+    submitBtn.style.display = 'none';
+    prevBtn.style.display = 'none';
+    return;
+  }
+
+  examFinishedAt = null;
+  submitBtn.style.display = 'inline-flex';
+  prevBtn.style.display = 'inline-flex';
+  prevBtn.disabled = !data.can_go_prev;
+  progress.textContent = `Pregunta ${data.index} de ${data.total}`;
+  const item = data.item;
+
+  if (item.type === 'mcq') {
+    const options = item.choices.map((c, i) => `
+      <label class="option">
+        <input type="radio" name="mcq_answer" value="${i}" ${String(i) === String(data.existing_answer) ? 'checked' : ''}>
+        <span>${c}</span>
+      </label>`).join('');
+
+    wrap.innerHTML = buildQuestionWrap(data.index, `
+      <div class="question-block">
+        <h2>Pregunta de opcion multiple</h2>
+        <p>${item.prompt}</p>
+        <div class="options">${options}</div>
+      </div>`);
+  } else if (item.type === 'image_click') {
+    const spots = item.hotspots.map((s, i) => `
+      <button
+        type="button"
+        class="hotspot ${String(data.existing_answer) === String(s.id) ? 'active' : ''}"
+        style="left:${s.x}%; top:${s.y}%; width:${s.w}%; height:${s.h}%;"
+        data-spot-id="${s.id}"
+        title="Zona ${i + 1}">
+      </button>
+    `).join('');
+    wrap.innerHTML = buildQuestionWrap(data.index, `
+      <div class="question-block">
+        <h2>Analisis visual</h2>
+        <p>${item.prompt}</p>
+        <div class="image-hotspot-wrap" id="hotspotWrap">
+          <img src="${item.image_url}" alt="captura de terminal para analisis">
+          ${spots}
+        </div>
+        <div class="small">Haz clic en la zona que crees correcta.</div>
+      </div>`);
+    bindHotspots(data.existing_answer || '');
+  } else {
+    const shadowNote = item.id === 'shell_shadow_hashes'
+      ? `<div class="question-block" style="margin-top:10px;">
+          <label class="small" for="shadowToolInput"><strong>Texto libre:</strong> Si conoces algun programa o herramienta que intente leer/atacar estos datos sensibles, escribelo aqui.</label>
+          <input id="shadowToolInput" type="text" placeholder="Ejemplo: john, hashcat, hydra..." value="${(data.existing_extra_text || '').replace(/\"/g, '&quot;')}">
+        </div>`
+      : '';
+    wrap.innerHTML = buildQuestionWrap(data.index, `
+      <div class="question-block">
+        <h2>Ejercicio Shell: ${item.title}</h2>
+        <p>${item.prompt}</p>
+        <div class="terminal">
+          <div class="terminal-screen" id="terminalOut">
+            <div class="muted">Escribe uno o varios comandos valido para resolver la tarea.</div>
+          </div>
+          <div class="terminal-input" id="terminalInputWrap">
+            <span id="shellPrompt">${item.terminal_hint}</span>
+            <input id="cmdInput" type="text" autocomplete="off" placeholder="comando..." value="${(data.existing_answer || '').replace(/\"/g, '&quot;')}">
+            <button id="runCmdBtn" class="secondary" type="button">Ejecutar</button>
+          </div>
+        </div>
+        ${shadowNote}
+      </div>`);
+    bindTerminal();
+  }
+}
+
+function renderQuestionNav(data) {
+  const wrap = document.getElementById('questionNav');
+  if (!wrap || !data || !data.total) return;
+  const answered = new Set((data.answered_indices || []).map(x => Number(x)));
+  const current = (data.index || 1) - 1;
+  const maxReached = Math.max(current, Number(data.max_reached_index || data.index || 1) - 1);
+  const html = [];
+  for (let i = 0; i < data.total; i += 1) {
+    const active = i === current ? 'active' : '';
+    const done = answered.has(i) ? 'done' : '';
+    const locked = i > maxReached ? 'locked' : '';
+    const disabled = i > maxReached ? 'disabled' : '';
+    html.push(`<button type="button" class="q-chip ${active} ${done} ${locked}" data-q="${i+1}" ${disabled}>${i+1}</button>`);
+  }
+  wrap.innerHTML = html.join('');
+  wrap.querySelectorAll('.q-chip').forEach(btn => {
+    if (btn.disabled) return;
+    btn.addEventListener('click', () => gotoQuestion(Number(btn.dataset.q)));
+  });
+}
+
+function bindHotspots(existing) {
+  selectedHotspot = existing || '';
+  const wrap = document.getElementById('hotspotWrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.hotspot').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedHotspot = btn.dataset.spotId || '';
+      wrap.querySelectorAll('.hotspot').forEach(x => x.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+}
+
+function addTerminalLine(line) {
+  const out = document.getElementById('terminalOut');
+  if (!out) return;
+  const div = document.createElement('div');
+  div.textContent = line;
+  out.appendChild(div);
+  out.scrollTop = out.scrollHeight;
+}
+
+function createDir(children = {}) {
+  return { type: 'dir', children: { ...children } };
+}
+
+function createFile(content = '') {
+  return { type: 'file', content };
+}
+
+function initShellState() {
+  return {
+    user: 'alumno',
+    host: 'linux',
+    cwd: '/home/alumno/lab',
+    fs: createDir({
+      home: createDir({
+        alumno: createDir({
+          lab: createDir({
+            '.env': createFile('TOKEN=abc123\nMODE=dev\n'),
+            '.config': createFile('theme=dark\nfont=mono\n'),
+            'notas.txt': createFile('Checklist Linux\n- revisar permisos\n- revisar logs\n'),
+            'script.sh': createFile('#!/bin/bash\necho diagnostico\n'),
+            'respaldo.tar.gz': createFile('BINARYDATA'),
+            'archivo_tmp.log': createFile('tmp line 1\ntmp line 2\n'),
+          }),
+        }),
+      }),
+      var: createDir({
+        log: createDir({
+          'respaldo.tar.gz': createFile('SIMULATED_TAR_GZ_DATA'),
+          'syslog': createFile(
+            'Mar 07 12:00:01 kernel: usb 1-1: new high-speed USB device number 7\n' +
+            'Mar 07 12:00:10 systemd[1]: Started Session 31 of user alumno.\n' +
+            'Mar 07 12:01:22 kernel: error: disk I/O timeout on sda\n' +
+            'Mar 07 12:02:49 app: ERROR unable to open file /var/data/input.dat\n' +
+            'Mar 07 12:03:10 CRON[2123]: (root) CMD (run-parts /etc/cron.hourly)\n' +
+            'Mar 07 12:04:11 sshd[2210]: Failed password for invalid user admin from 10.0.0.15\n' +
+            'Mar 07 12:05:28 sudo: alumno : TTY=pts/0 ; PWD=/home/alumno ; USER=root ; COMMAND=/usr/bin/apt update\n' +
+            'Mar 07 12:06:31 app: WARN retrying API request\n' +
+            'Mar 07 12:07:54 app: ERROR timeout contacting backend service\n' +
+            'Mar 07 12:08:17 kernel: audit: type=1400 apparmor="DENIED" operation="open"\n' +
+            'Mar 07 12:09:21 systemd[1]: apache2.service: Reloaded.\n' +
+            'Mar 07 12:10:44 kernel: CPU0: Core temperature above threshold\n' +
+            'Mar 07 12:11:12 rsyslogd: action "action-7-builtin:omfile" resumed\n' +
+            'Mar 07 12:12:01 app: INFO background job complete\n'
+          ),
+          'auth.log': createFile(
+            'Mar 07 11:45:01 sshd[1120]: Accepted password for alumno from 10.10.10.5 port 53211 ssh2\n' +
+            'Mar 07 11:45:04 sshd[1120]: pam_unix(sshd:session): session opened for user alumno\n' +
+            'Mar 07 11:46:22 sudo: alumno : TTY=pts/0 ; PWD=/home/alumno ; USER=root ; COMMAND=/usr/bin/apt update\n' +
+            'Mar 07 11:47:01 sudo: pam_unix(sudo:session): session opened for user root by alumno(uid=0)\n' +
+            'Mar 07 11:47:33 sudo: pam_unix(sudo:session): session closed for user root\n' +
+            'Mar 07 11:49:10 sshd[1301]: Failed password for root from 172.16.1.25 port 45622 ssh2\n' +
+            'Mar 07 11:49:12 sshd[1301]: Failed password for root from 172.16.1.25 port 45622 ssh2\n' +
+            'Mar 07 11:49:15 sshd[1301]: Connection closed by authenticating user root 172.16.1.25\n' +
+            'Mar 07 11:50:44 sudo: alumno : TTY=pts/0 ; PWD=/home/alumno/lab ; USER=root ; COMMAND=/usr/bin/systemctl status apache2\n' +
+            'Mar 07 11:51:03 sudo: pam_unix(sudo:session): session opened for user root by alumno(uid=0)\n' +
+            'Mar 07 11:51:09 sudo: pam_unix(sudo:session): session closed for user root\n' +
+            'Mar 07 11:53:18 sshd[1410]: Accepted publickey for alumno from 10.10.10.7 port 50661 ssh2\n' +
+            'Mar 07 11:54:33 sshd[1410]: pam_unix(sshd:session): session closed for user alumno\n' +
+            'Mar 07 11:56:47 sudo: alumno : TTY=pts/1 ; PWD=/var/log ; USER=root ; COMMAND=/usr/bin/tail -n 20 syslog\n' +
+            'Mar 07 11:57:10 sshd[1503]: Accepted password for alumno from 10.10.10.8 port 52300 ssh2\n' +
+            'Mar 07 11:57:44 sshd[1503]: pam_unix(sshd:session): session opened for user alumno\n' +
+            'Mar 07 11:58:02 sudo: alumno : TTY=pts/1 ; PWD=/home/alumno ; USER=root ; COMMAND=/usr/bin/journalctl -u apache2 -n 30\n' +
+            'Mar 07 11:58:55 sudo: pam_unix(sudo:session): session closed for user root\n' +
+            'Mar 07 11:59:18 sshd[1503]: pam_unix(sshd:session): session closed for user alumno\n' +
+            'Mar 07 12:00:01 sshd[1600]: Accepted password for alumno from 10.10.10.10 port 53301 ssh2\n'
+          ),
+          'kern.log': createFile('Mar 07 kernel: usb device connected\n'),
+        }),
+      }),
+      etc: createDir({
+        'passwd': createFile(
+          'root:x:0:0:root:/root:/bin/bash\n' +
+          'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n' +
+          'bin:x:2:2:bin:/bin:/usr/sbin/nologin\n' +
+          'sys:x:3:3:sys:/dev:/usr/sbin/nologin\n' +
+          'sync:x:4:65534:sync:/bin:/bin/sync\n' +
+          'games:x:5:60:games:/usr/games:/usr/sbin/nologin\n'
+        ),
+        'shadow': createFile(
+          'root:$6$u0q5J8av$4y9NnY4nM4o4t4Wj1B2QGQw3y6dJ9m7yP6jS8f8r2V8aK2w9Dk1Qm4s2N7JrI9mH1R5mQ2t3L8j2f6W8Z1mQ1:19600:0:99999:7:::\n' +
+          'daemon:*:19600:0:99999:7:::\n' +
+          'bin:*:19600:0:99999:7:::\n' +
+          'sys:*:19600:0:99999:7:::\n' +
+          'alumno:$6$gS8vL2kP$Y8vN0r4xW2k6P1zR3c9mJ5qL0wQ7xH8aD2nM4pS6vB1yT9kL3mN8pQ2rV6xC1zH4:19600:0:99999:7:::\n'
+        ),
+      }),
+      tmp: createDir({}),
+    }),
+  };
+}
+
+function splitPath(path) {
+  return path.split('/').filter(Boolean);
+}
+
+function normalizePath(inputPath, cwd) {
+  let parts = [];
+  if (!inputPath || inputPath === '.') return cwd;
+  if (inputPath.startsWith('/')) {
+    parts = [];
+  } else if (inputPath.startsWith('~')) {
+    parts = ['home', 'alumno'];
+    inputPath = inputPath.slice(1) || '/';
+  } else {
+    parts = splitPath(cwd);
+  }
+  for (const seg of splitPath(inputPath)) {
+    if (seg === '.' || seg === '') continue;
+    if (seg === '..') {
+      if (parts.length) parts.pop();
+    } else {
+      parts.push(seg);
+    }
+  }
+  return '/' + parts.join('/');
+}
+
+function getNode(path) {
+  const parts = splitPath(path);
+  let node = shellState.fs;
+  for (const p of parts) {
+    if (!node || node.type !== 'dir' || !node.children[p]) return null;
+    node = node.children[p];
+  }
+  return node;
+}
+
+function getParentAndName(path) {
+  const parts = splitPath(path);
+  const name = parts.pop();
+  const parentPath = '/' + parts.join('/');
+  return { parent: getNode(parentPath || '/'), name, parentPath: parentPath || '/' };
+}
+
+function displayPath(path) {
+  if (path === '/home/alumno') return '~';
+  if (path.startsWith('/home/alumno/')) return '~' + path.slice('/home/alumno'.length);
+  return path;
+}
+
+function shellPrompt() {
+  return `${shellState.user}@${shellState.host}:${displayPath(shellState.cwd)}$`;
+}
+
+function wildcardToRegex(pattern) {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`);
+}
+
+function fmtHumanSize(size) {
+  const n = Number(size || 0);
+  if (n < 1024) return String(n);
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)}M`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)}G`;
+}
+
+function pseudoMtimeScore(name) {
+  let acc = 0;
+  for (let i = 0; i < name.length; i += 1) acc = (acc * 31 + name.charCodeAt(i)) % 100000;
+  return acc;
+}
+
+function lsLongLine(name, node, humanReadable) {
+  const isDir = node && node.type === 'dir';
+  const perms = isDir ? 'drwxr-xr-x' : '-rw-r--r--';
+  const links = isDir ? 3 : 1;
+  const owner = 'alumno';
+  const group = 'alumno';
+  const rawSize = isDir ? 4096 : ((node && node.content) ? node.content.length : 0);
+  const size = humanReadable ? fmtHumanSize(rawSize) : String(rawSize);
+  return `${perms} ${links} ${owner} ${group} ${size.padStart(6, ' ')} Mar 07 13:42 ${name}`;
+}
+
+function listDir(node, opts) {
+  const showAll = !!opts.showAll;
+  const longFormat = !!opts.longFormat;
+  const humanReadable = !!opts.humanReadable;
+  const sortTime = !!opts.sortTime;
+  const reverse = !!opts.reverse;
+  const entries = [];
+
+  if (showAll) {
+    entries.push({ name: '.', node: { type: 'dir', children: {} }, score: 999999 });
+    entries.push({ name: '..', node: { type: 'dir', children: {} }, score: 999998 });
+  }
+
+  for (const [name, child] of Object.entries(node.children)) {
+    if (!showAll && name.startsWith('.')) continue;
+    entries.push({ name, node: child, score: pseudoMtimeScore(name) });
+  }
+
+  entries.sort((a, b) => {
+    if (sortTime) return b.score - a.score;
+    return a.name.localeCompare(b.name);
+  });
+  if (reverse) entries.reverse();
+
+  if (longFormat) {
+    const payload = entries.map(e => lsLongLine(e.name, e.node, humanReadable)).join('\n');
+    return `total ${entries.length}\n${payload}`;
+  }
+  return entries.map(e => e.name).join('\n');
+}
+
+const helpMap = {
+  ls: "Uso: ls [OPCION]... [ARCHIVO]...\n  -a, --all       muestra archivos ocultos\n  -l              formato largo",
+  cat: "Uso: cat [ARCHIVO]...\nMuestra contenido de uno o varios archivos.",
+  more: "Uso: more [ARCHIVO]...\nMuestra contenido por paginas (simulado).",
+  pwd: "Uso: pwd\nMuestra el directorio de trabajo actual.",
+  du: "Uso: du [OPCION]... [ARCHIVO]...\n  -h  formato legible\n  -s  resumen total\n  -m  en megabytes",
+  df: "Uso: df [OPCION]... [ARCHIVO]...\n  -h  formato legible\n  -i  mostrar inodos",
+  free: "Uso: free [OPCION]\n  -m  mostrar en MB",
+  w: "Uso: w\nMuestra usuarios conectados y su actividad.",
+  last: "Uso: last [opciones]\nMuestra historial de inicios/cierres de sesion.",
+  tail: "Uso: tail [OPCION]... [ARCHIVO]...\n  -n NUM  ultimas NUM lineas",
+  head: "Uso: head [OPCION]... [ARCHIVO]...\n  -n NUM  primeras NUM lineas",
+  grep: "Uso: grep [OPCION]... PATRON [ARCHIVO]...\n  -i ignorar mayusculas/minusculas\n  -n mostrar numero de linea\n  -v invertir coincidencia\n  -c contar coincidencias\n  -E expresion regular extendida",
+  find: "Uso: find RUTA [expresion]\nEjemplo: find /var/log -type f -name '*.log' -mtime -2",
+  ps: "Uso: ps [OPCION]\nEjemplos: ps ; ps -ef ; ps aux | grep Z",
+  top: "Uso: top\nMuestra procesos en tiempo real.",
+  htop: "Uso: htop\nMonitor interactivo de procesos.",
+  systemctl: "Uso: systemctl [comando] [unidad]\nEjemplos: systemctl status cups, systemctl restart apache2",
+  journalctl: "Uso: journalctl [opciones]\nEjemplo: journalctl -u apache2 -n 30",
+  lpstat: "Uso: lpstat [opciones]\n  -p  impresoras\n  -o  trabajos pendientes",
+  tar: "Uso: tar [opciones] archivo\nEjemplos: tar -czf respaldo.tar.gz /etc ; tar -xzf respaldo.tar.gz",
+  chmod: "Uso: chmod [opciones] modo archivo\nEjemplo: chmod 700 script.sh",
+  chown: "Uso: chown [opciones] propietario[:grupo] archivo\nEjemplo: chown alumno:soporte script.sh",
+};
+
+function getBaseCmd(raw) {
+  const p = raw.trim().split(/\s+/);
+  return p[0] || '';
+}
+
+function commandNotFound(base) {
+  return `bash: ${base}: command not found`;
+}
+
+function simulateFsCommand(tokens, raw) {
+  if (raw.includes('|')) return null;
+  const cmd = tokens[0];
+  const args = tokens.slice(1);
+
+  if (cmd === 'sudo') {
+    if (!args.length) return 'usage: sudo <command>';
+    return simulateFsCommand(args, args.join(' '));
+  }
+
+  if (cmd === 'pwd') return shellState.cwd;
+
+  if (cmd === 'cd') {
+    const targetRaw = args[0] || '~';
+    const target = normalizePath(targetRaw === '~' ? '/home/alumno' : targetRaw, shellState.cwd);
+    const node = getNode(target);
+    if (!node || node.type !== 'dir') return `bash: cd: ${targetRaw}: No such file or directory`;
+    shellState.cwd = target;
+    return '';
+  }
+
+  if (cmd === 'ls') {
+    const options = args.filter(a => a.startsWith('-')).join('');
+    const showAll = options.includes('a');
+    const longFormat = options.includes('l');
+    const humanReadable = options.includes('h');
+    const sortTime = options.includes('t');
+    const reverse = options.includes('r');
+    const maybePath = args.find(a => !a.startsWith('-'));
+    const target = normalizePath(maybePath || '.', shellState.cwd);
+    const node = getNode(target);
+    if (!node) return `ls: cannot access '${maybePath}': No such file or directory`;
+    if (node.type === 'file') {
+      const fileName = maybePath || target.split('/').pop();
+      return longFormat ? lsLongLine(fileName, node, humanReadable) : fileName;
+    }
+    return listDir(node, { showAll, longFormat, humanReadable, sortTime, reverse });
+  }
+
+  if (cmd === 'mkdir') {
+    const name = args[0];
+    if (!name) return 'mkdir: missing operand';
+    const target = normalizePath(name, shellState.cwd);
+    const { parent, name: base } = getParentAndName(target);
+    if (!parent || parent.type !== 'dir') return `mkdir: cannot create directory '${name}': No such file or directory`;
+    if (parent.children[base]) return `mkdir: cannot create directory '${name}': File exists`;
+    parent.children[base] = createDir({});
+    return '';
+  }
+
+  if (cmd === 'touch') {
+    const name = args[0];
+    if (!name) return 'touch: missing file operand';
+    const target = normalizePath(name, shellState.cwd);
+    const { parent, name: base } = getParentAndName(target);
+    if (!parent || parent.type !== 'dir') return `touch: cannot touch '${name}': No such file or directory`;
+    if (!parent.children[base]) parent.children[base] = createFile('');
+    return '';
+  }
+
+  if (cmd === 'cat') {
+    const name = args[0];
+    if (!name) return 'cat: missing file operand';
+    const target = normalizePath(name, shellState.cwd);
+    const node = getNode(target);
+    if (!node || node.type !== 'file') return `cat: ${name}: No such file`;
+    return node.content || '';
+  }
+
+  if (cmd === 'more') {
+    const name = args[0];
+    if (!name) return 'more: missing file operand';
+    const target = normalizePath(name, shellState.cwd);
+    const node = getNode(target);
+    if (!node || node.type !== 'file') return `more: ${name}: No such file`;
+    return node.content || '';
+  }
+
+  if (cmd === 'rm') {
+    const interactive = args.includes('-i');
+    const recursive = args.includes('-r') || args.includes('-rf') || args.includes('-fr');
+    const targetArg = args.filter(a => !a.startsWith('-'))[0];
+    if (!targetArg) return 'rm: missing operand';
+    const target = normalizePath(targetArg, shellState.cwd);
+    const { parent, name } = getParentAndName(target);
+    if (!parent || !parent.children[name]) return `rm: cannot remove '${targetArg}': No such file or directory`;
+    const node = parent.children[name];
+    if (node.type === 'dir' && !recursive) return `rm: cannot remove '${targetArg}': Is a directory`;
+    delete parent.children[name];
+    return interactive ? `rm: remove regular file '${targetArg}'? y` : '';
+  }
+
+  if (cmd === 'cp' || cmd === 'mv') {
+    const srcArg = args[0], dstArg = args[1];
+    if (!srcArg || !dstArg) return `${cmd}: missing file operand`;
+    const srcPath = normalizePath(srcArg, shellState.cwd);
+    const dstPath = normalizePath(dstArg, shellState.cwd);
+    const srcNode = getNode(srcPath);
+    if (!srcNode || srcNode.type !== 'file') return `${cmd}: cannot stat '${srcArg}': No such file`;
+    const dstNode = getNode(dstPath);
+    if (dstNode && dstNode.type === 'dir') {
+      const srcBase = srcPath.split('/').filter(Boolean).pop();
+      dstNode.children[srcBase] = createFile(srcNode.content || '');
+    } else {
+      const { parent: dstParent, name: dstName } = getParentAndName(dstPath);
+      if (!dstParent || dstParent.type !== 'dir') return `${cmd}: cannot create regular file '${dstArg}': No such file or directory`;
+      dstParent.children[dstName] = createFile(srcNode.content || '');
+    }
+    if (cmd === 'mv') {
+      const { parent: srcParent, name: srcName } = getParentAndName(srcPath);
+      delete srcParent.children[srcName];
+    }
+    return '';
+  }
+
+  if (cmd === 'head' || cmd === 'tail') {
+    const nIdx = args.indexOf('-n');
+    const shortN = args.find(a => /^-\d+$/.test(a));
+    let n = 10;
+    if (nIdx >= 0 && args[nIdx + 1]) n = parseInt(args[nIdx + 1], 10) || 10;
+    if (shortN) n = parseInt(shortN.slice(1), 10) || 10;
+    const fileArg = args.find(a => !a.startsWith('-') && !/^\d+$/.test(a));
+    if (!fileArg) return `${cmd}: missing file operand`;
+    const node = getNode(normalizePath(fileArg, shellState.cwd));
+    if (!node || node.type !== 'file') return `${cmd}: cannot open '${fileArg}' for reading: No such file`;
+    const lines = (node.content || '').split('\n').filter(x => x.length > 0);
+    return (cmd === 'head' ? lines.slice(0, n) : lines.slice(-n)).join('\n');
+  }
+
+  if (cmd === 'grep') {
+    let idx = 0;
+    const opts = { i: false, n: false, v: false, c: false, E: false, w: false, x: false };
+    while (idx < args.length && args[idx].startsWith('-') && args[idx] !== '-') {
+      const arg = args[idx];
+      if (arg === '--') { idx += 1; break; }
+      for (const ch of arg.slice(1)) {
+        if (!(ch in opts)) return `grep: invalid option -- '${ch}'\n${helpMap.grep}`;
+        opts[ch] = true;
+      }
+      idx += 1;
+    }
+    const pattern = args[idx];
+    const fileArgs = args.slice(idx + 1);
+    if (!pattern || fileArgs.length === 0) return 'grep: usage: grep [OPTION]... PATTERN [FILE]...';
+
+    let rx = null;
+    if (opts.E) {
+      try {
+        rx = new RegExp(pattern, opts.i ? 'i' : '');
+      } catch (_) {
+        return `grep: invalid regular expression: ${pattern}`;
+      }
+    }
+    const out = [];
+    for (const f of fileArgs) {
+      const node = getNode(normalizePath(f, shellState.cwd));
+      if (!node || node.type !== 'file') return `grep: ${f}: No such file or directory`;
+      const lines = (node.content || '').split('\n');
+      let count = 0;
+      lines.forEach((line, lineNo) => {
+        let matched = false;
+        if (rx) {
+          matched = rx.test(line);
+        } else {
+          const src = opts.i ? line.toLowerCase() : line;
+          const needle = opts.i ? pattern.toLowerCase() : pattern;
+          if (opts.x) matched = src === needle;
+          else if (opts.w) matched = new RegExp(`\\b${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, opts.i ? 'i' : '').test(line);
+          else matched = src.includes(needle);
+        }
+        if (opts.v) matched = !matched;
+        if (matched) {
+          count += 1;
+          if (!opts.c) {
+            const pfx = opts.n ? `${lineNo + 1}:` : '';
+            out.push(`${fileArgs.length > 1 ? `${f}:` : ''}${pfx}${line}`);
+          }
+        }
+      });
+      if (opts.c) out.push(`${fileArgs.length > 1 ? `${f}:` : ''}${count}`);
+    }
+    return out.join('\n');
+  }
+
+  if (cmd === 'find') {
+    const startArg = args[0] || '.';
+    const startPath = normalizePath(startArg, shellState.cwd);
+    const start = getNode(startPath);
+    if (!start) return `find: '${startArg}': No such file or directory`;
+    let onlyFiles = args.includes('-type') && args[args.indexOf('-type') + 1] === 'f';
+    let pattern = '*';
+    const nIdx = args.indexOf('-name');
+    if (nIdx >= 0 && args[nIdx + 1]) pattern = args[nIdx + 1].replace(/^['"]|['"]$/g, '');
+    const rx = wildcardToRegex(pattern);
+    const out = [];
+    const walk = (node, path) => {
+      if (node.type === 'file') {
+        const name = path.split('/').pop();
+        if (rx.test(name)) out.push(path);
+        return;
+      }
+      if (!onlyFiles) {
+        const name = path.split('/').pop();
+        if (path !== startPath && rx.test(name)) out.push(path);
+      }
+      for (const [k, v] of Object.entries(node.children)) {
+        walk(v, `${path === '/' ? '' : path}/${k}` || '/');
+      }
+    };
+    walk(start, startPath);
+    return out.join('\n');
+  }
+
+  if (cmd === 'ps') {
+    if (args.length === 0) {
+      return "  PID TTY          TIME CMD\n 3181 pts/0    00:00:02 bash\n 3310 pts/0    00:00:00 ps";
+    }
+    const joined = args.join(' ');
+    if (joined === 'aux' || joined === '-aux' || joined === '-ef') {
+      return "UID          PID    PPID  C STIME TTY          TIME CMD\n" +
+        "root         1       0  0 09:11 ?        00:00:03 systemd\n" +
+        "root      1058       1  0 09:11 ?        00:00:08 apache2\n" +
+        "mysql     1820       1  1 09:12 ?        00:01:24 mysqld\n" +
+        "alumno    3181    3010  0 13:20 pts/0    00:00:02 bash\n" +
+        "root      1234       1  0 09:20 ?        00:00:00 [proceso_defunct] <defunct>\n" +
+        "alumno    3342    3181  0 13:51 pts/0    00:00:00 ps " + joined;
+    }
+    return `ps: unsupported option set '${joined}'\n${helpMap.ps}`;
+  }
+
+  if (cmd === 'tar') {
+    if (!args.length) return helpMap.tar;
+    const opts = args.filter(a => a.startsWith('-')).join('');
+    const operands = args.filter(a => !a.startsWith('-'));
+
+    if (opts.includes('x')) {
+      const archiveArg = operands[0];
+      if (!archiveArg) return `tar: missing archive file operand\n${helpMap.tar}`;
+      const archivePath = normalizePath(archiveArg, shellState.cwd);
+      const archiveNode = getNode(archivePath);
+      if (archiveNode && archiveNode.type === 'dir') {
+        return `tar: ${archiveArg}: Cannot read: Is a directory\ntar: Error is not recoverable: exiting now`;
+      }
+      if (!archiveNode) {
+        return `tar: ${archiveArg}: Cannot open: No such file or directory\ntar: Error is not recoverable: exiting now`;
+      }
+      return `Extraccion simulada desde ${archiveArg}`;
+    }
+
+    if (opts.includes('c')) {
+      const outArg = operands[0];
+      const srcArg = operands[1];
+      if (!outArg || !srcArg) return `tar: Cowardly refusing to create an empty archive\n${helpMap.tar}`;
+      const srcPath = normalizePath(srcArg, shellState.cwd);
+      const srcNode = getNode(srcPath);
+      if (!srcNode) return `tar: ${srcArg}: Cannot stat: No such file or directory\ntar: Exiting with failure status due to previous errors`;
+      const outPath = normalizePath(outArg, shellState.cwd);
+      const { parent, name } = getParentAndName(outPath);
+      if (!parent || parent.type !== 'dir') return `tar: ${outArg}: Cannot open: No such file or directory`;
+      parent.children[name] = createFile('SIMULATED_TAR_GZ_DATA');
+      return `${outArg} creado correctamente.`;
+    }
+
+    return helpMap.tar;
+  }
+
+  return null;
+}
+
+function fakeShellOutput(cmd) {
+  const raw = cmd.trim();
+  const c = raw.toLowerCase();
+  if (!c) return '';
+
+  const base = getBaseCmd(c);
+  const helpMatch = c.match(/^man\s+([a-z0-9_-]+)$/);
+  if (helpMatch) {
+    const topic = helpMatch[1];
+    return helpMap[topic] ? `MANUAL (${topic})\n${helpMap[topic]}` : `No manual entry for ${topic}`;
+  }
+  if (c === 'help') {
+    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop systemctl journalctl lpstat tar chmod chown\nUsa '<comando> --help' o 'man <comando>'.";
+  }
+  if (c.startsWith('help ')) {
+    const topic = c.split(/\s+/)[1];
+    return helpMap[topic] || `No hay ayuda para '${topic}'`;
+  }
+  if (c.endsWith(' --help') || c.endsWith(' --h')) {
+    return helpMap[base] || commandNotFound(base);
+  }
+
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const fsOut = simulateFsCommand(tokens, raw);
+  if (fsOut !== null) return fsOut;
+
+  if (/^clear$/.test(c)) return "\n".repeat(10) + "Pantalla limpiada.";
+  if (/^whoami$/.test(c)) return "alumno";
+  if (/^hostname$/.test(c)) return "linux-lab-01";
+  if (/^date$/.test(c)) return "Sat Mar 07 13:42:10 UTC 2026";
+  if (/^uname\s+-a$/.test(c)) return "Linux linux-lab-01 6.8.0-44-generic #44-Ubuntu SMP x86_64 GNU/Linux";
+  if (/^lsb_release\s+-a$/.test(c)) return "Distributor ID:\tUbuntu\nDescription:\tUbuntu 24.04.2 LTS\nRelease:\t24.04\nCodename:\tnoble";
+  if (/^pwd$/.test(c)) return "/home/alumno/lab";
+  if (/^ls(\s+-[a-z]+)?$/.test(c)) {
+    if (c.includes('-a')) return ".  ..  .env  .config  notas.txt";
+    return "notas.txt  script.sh  respaldo.tar.gz";
+  }
+
+  if (/^du\s+-sm$/.test(c)) return "2048\t.";
+  if (/^du\s+-h\s+\/var\s*\|\s*sort\s+-hr\s*\|\s*head\s+-n\s+5$/.test(c)) {
+    return "12G\t/var/lib\n2.1G\t/var/log\n760M\t/var/cache\n120M\t/var/tmp\n18M\t/var/spool";
+  }
+  if (/^df\s+-h$/.test(c)) {
+    return "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        50G   44G  4.8G  91% /\ntmpfs           1.9G  4.0M  1.9G   1% /run";
+  }
+  if (/^df\s+-h\s+\/$/.test(c) || /^df\s+\/\s+-h$/.test(c)) {
+    return "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        50G   44G  4.8G  91% /";
+  }
+  if (/^df\s+-h\s+\/var$/.test(c) || /^df\s+\/var\s+-h$/.test(c)) {
+    return "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        50G   44G  4.8G  91% /var";
+  }
+  if (/^df\s+-i$/.test(c)) {
+    return "Filesystem       Inodes   IUsed    IFree IUse% Mounted on\n/dev/sda1       3276800  212430  3064370    7% /\ntmpfs            497000     312   496688    1% /run";
+  }
+  if (/^free\s+-m$/.test(c) || /^free\s*,\s*m$/.test(c)) {
+    return "              total        used        free      shared  buff/cache   available\nMem:          15987        8234        1201         210        6552        7021\nSwap:          2048        1440         608";
+  }
+  if (/^w$/.test(c)) {
+    return " 13:44:01 up 2 days,  4:28,  2 users,  load average: 2.91, 1.87, 1.55\nUSER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT\nalumno   pts/0    10.10.10.8       13:20    1:02m  0.15s  0.02s bash\nsoporte  pts/1    10.10.10.12      13:31    0.00s  0.42s  0.05s top";
+  }
+  if (/^last$/.test(c)) {
+    return "alumno   pts/0        10.10.10.8      Sat Mar 07 13:20   still logged in\nsoporte  pts/1        10.10.10.12     Sat Mar 07 13:31 - 13:38  (00:07)\nreboot   system boot  6.8.0-44-generic Sat Mar 07 09:11   still running";
+  }
+  if (/^last\s+-n\s+1$/.test(c)) {
+    return "alumno   pts/0        10.10.10.8      Sat Mar 07 13:20   still logged in";
+  }
+
+  if (/^head(\s+-n\s+10|\s+-10)\s+\/etc\/passwd$/.test(c)) {
+    return "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nsync:x:4:65534:sync:/bin:/bin/sync";
+  }
+  if (/^tail(\s+-n\s+15|\s+-15)\s+\/var\/log\/auth\.log$/.test(c)) return "... ultimas 15 lineas de /var/log/auth.log ...";
+  if (/^tail(\s+-n\s+20|\s+-20)\s+\/var\/log\/syslog$/.test(c)) return "... ultimas 20 lineas de /var/log/syslog ...";
+  if (/^grep\s+-i\s+error\s+\/var\/log\/syslog\s*\|\s*tail\s+-n\s+20$/.test(c)) return "Mar 07 12:01:22 kernel: error: disk I/O timeout\nMar 07 12:02:49 app: ERROR unable to open file\n...";
+  if (/^cat\s+\/var\/log\/syslog\s*\|\s*grep\s+error$/.test(c) || /^cat\s+\/var\/log\/syslog\s*\|\s*grep\s+-i\s+error$/.test(c)) {
+    return "Mar 07 12:01:22 kernel: error: disk I/O timeout on sda\nMar 07 12:02:49 app: ERROR unable to open file /var/data/input.dat\nMar 07 12:07:54 app: ERROR timeout contacting backend service";
+  }
+  if (/^cat\s+\/var\/log\/syslog\s*\|\s*grep\s+error\s*\|\s*tail\s+-n\s+20$/.test(c) || /^cat\s+\/var\/log\/syslog\s*\|\s*grep\s+-i\s+error\s*\|\s*tail\s+-n\s+20$/.test(c)) {
+    return "Mar 07 12:01:22 kernel: error: disk I/O timeout on sda\nMar 07 12:02:49 app: ERROR unable to open file /var/data/input.dat\nMar 07 12:07:54 app: ERROR timeout contacting backend service";
+  }
+  if (/^find\s+\/var\/log\s+-type\s+f\s+-name\s+\"?\*\.log\"?\s+-mtime\s+-2$/.test(c)) return "/var/log/syslog\n/var/log/auth.log\n/var/log/kern.log";
+
+  if (/^ps\s+aux\s*\|\s*grep\s+z$/.test(c) || /^ps\s+-el\s*\|\s*grep\s+z$/.test(c)) {
+    return "root   1234  0.0  0.0  0  0 ?  Z  09:20 0:00 proceso_defunct";
+  }
+  if (/^top$/.test(c)) {
+    return "top - 13:44:01 up 2 days, 2 users, load average: 2.91, 1.87, 1.55\n" +
+      "Tasks: 312 total,   3 running, 305 sleeping,   0 stopped,   4 zombie\n" +
+      "%Cpu(s): 71.2 us, 11.4 sy,  0.0 ni, 16.0 id,  1.1 wa,  0.0 hi,  0.3 si,  0.0 st\n" +
+      "MiB Mem : 15987.0 total,  1201.0 free,  8234.0 used,  6552.0 buff/cache\n" +
+      "MiB Swap:  2048.0 total,   160.0 free,  1888.0 used.  7021.0 avail Mem\n" +
+      "  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND\n" +
+      " 3181 alumno    20   0 1624844 312120  18520 R  97.3  1.9  22:14.33 python3\n" +
+      " 1040 root      20   0  552400  42120  12044 S  23.0  0.3  10:04.12 java\n" +
+      " 2210 www-data  20   0  242312  18044   8420 S  12.4  0.1   4:21.10 apache2\n" +
+      " 1820 mysql     20   0 1562312 128044  20144 S   8.1  0.8  14:18.50 mysqld\n" +
+      " 2424 root      20   0 1023120  88412  12200 S   5.4  0.5   6:11.09 docker\n" +
+      " 2711 root      20   0  144220  11200   7600 S   2.0  0.1   1:01.20 cupsd\n" +
+      " 3050 root      20   0   90220   8120   5600 S   1.7  0.0   0:44.01 rsyslogd\n" +
+      " 3501 root      20   0   50220   4020   2200 S   0.7  0.0   0:20.52 sshd";
+  }
+  if (/^htop$/.test(c)) return "htop 3.2.2 - proceso python usando 97% CPU";
+
+  if (/^systemctl\s+status\s+(apache2|cups)$/.test(c)) {
+    const svc = c.split(/\s+/)[2];
+    return `${svc}.service - ${svc === 'cups' ? 'CUPS Scheduler' : 'The Apache HTTP Server'}\n   Loaded: loaded\n   Active: active (running)`;
+  }
+  if (/^systemctl\s+start\s+(apache2|cups)$/.test(c)) {
+    const svc = c.split(/\s+/)[2];
+    return `Started ${svc}.service.`;
+  }
+  if (/^systemctl\s+restart\s+(apache2|cups)$/.test(c)) return "Job for service executed successfully.";
+  if (/^journalctl\s+-u\s+apache2\s+-n\s+\d+$/.test(c)) return "-- Logs begin --\nMar 07 12:31:12 apache2[1058]: Graceful restart requested\nMar 07 12:31:12 apache2[1058]: Resuming normal operations";
+  if (/^init\s+0$/.test(c)) return "Broadcast message: The system is going down for system halt NOW! (simulado)";
+
+  if (/^lpstat\s+-p$/.test(c)) return "printer HP_Oficina is idle. enabled since Sat 07 Mar 2026 12:20:11 PM UTC";
+  if (/^lpstat\s+-o$/.test(c)) return "HP_Oficina-245 alumno 1024 bytes\nHP_Oficina-246 alumno 2048 bytes";
+
+  if (/^tar\s+-czf\s+respaldo\.tar\.gz\s+\/etc$/.test(c)) return "respaldo.tar.gz creado correctamente.";
+  if (/^tar\s+-xzf\s+respaldo\.tar\.gz$/.test(c)) return "Archivos extraidos desde respaldo.tar.gz";
+
+  if (/^chown\s+alumno:soporte\s+script\.sh\s*&&\s*chmod\s+700\s+script\.sh$/.test(c)) {
+    const script = getNode('/home/alumno/lab/script.sh');
+    if (script && script.type === 'file') script.content = '# owner=alumno:soporte mode=700\n' + (script.content || '');
+    return "Propietario y permisos actualizados.";
+  }
+  if (/^rm\s+-i\s+archivo_tmp\.log$/.test(c)) return "rm: remove regular file 'archivo_tmp.log'? y";
+
+  if (helpMap[base]) return `${base}: argumentos invalidos\n${helpMap[base]}`;
+  return commandNotFound(base);
+}
+
+function bindTerminal() {
+  const input = document.getElementById('cmdInput');
+  const runBtn = document.getElementById('runCmdBtn');
+  const prompt = document.getElementById('shellPrompt');
+  if (!input || !runBtn) return;
+  if (!shellState) shellState = initShellState();
+  if (prompt) prompt.textContent = shellPrompt();
+
+  const execute = () => {
+    const cmd = input.value.trim();
+    if (!cmd) return;
+    shellHistory.push(cmd);
+    shellHistoryIdx = shellHistory.length;
+    currentShellCommandLog.push(cmd);
+    if (currentShellCommandLog.length > 120) currentShellCommandLog = currentShellCommandLog.slice(-120);
+    addTerminalLine(`${shellPrompt()} ${cmd}`);
+    const out = fakeShellOutput(cmd);
+    if (out) addTerminalLine(out);
+    if (prompt) prompt.textContent = shellPrompt();
+    input.dataset.lastExecuted = cmd;
+    input.value = '';
+  };
+
+  runBtn.addEventListener('click', execute);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      execute();
+    } else if (ev.key === 'ArrowUp' && shellHistory.length > 0) {
+      ev.preventDefault();
+      shellHistoryIdx = Math.max(0, shellHistoryIdx - 1);
+      input.value = shellHistory[shellHistoryIdx];
+    } else if (ev.key === 'ArrowDown' && shellHistory.length > 0) {
+      ev.preventDefault();
+      shellHistoryIdx = Math.min(shellHistory.length, shellHistoryIdx + 1);
+      input.value = shellHistoryIdx >= shellHistory.length ? '' : shellHistory[shellHistoryIdx];
+    }
+  });
+}
+
+async function fetchState() {
+  const res = await fetch(stateUrl);
+  state = await res.json();
+  renderState(state);
+}
+
+async function submitAnswer() {
+  if (!state || state.completed) return;
+
+  let answer = '';
+  if (state.item.type === 'mcq') {
+    const selected = document.querySelector('input[name="mcq_answer"]:checked');
+    if (!selected) {
+      document.getElementById('feedback').textContent = 'Selecciona una opcion antes de continuar.';
+      return;
+    }
+    answer = selected.value;
+  } else if (state.item.type === 'image_click') {
+    if (!selectedHotspot) {
+      document.getElementById('feedback').textContent = 'Selecciona una zona en la imagen.';
+      return;
+    }
+    answer = selectedHotspot;
+  } else {
+    const cmd = document.getElementById('cmdInput');
+    const candidate = (cmd && cmd.value.trim()) || (cmd && cmd.dataset.lastExecuted) || '';
+    if (!candidate) {
+      document.getElementById('feedback').textContent = 'Escribe un comando para continuar.';
+      return;
+    }
+    answer = candidate;
+  }
+
+  const res = await fetch(answerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      answer,
+      distro_guess: (document.getElementById('distroGuessInput')?.value || '').trim(),
+      extra_text: (document.getElementById('shadowToolInput')?.value || '').trim(),
+      command_trace: state.item.type === 'shell' ? currentShellCommandLog : []
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById('feedback').textContent = data.error || 'Error al enviar respuesta';
+    return;
+  }
+
+  document.getElementById('feedback').textContent = `${data.is_correct ? 'Correcto' : 'Incorrecto'} - ${data.feedback}`;
+  await fetchState();
+}
+
+async function goPrev() {
+  if (!state || state.completed || !state.can_go_prev) return;
+  const res = await fetch(prevUrl, { method: 'POST' });
+  if (!res.ok) return;
+  await fetchState();
+}
+
+async function gotoQuestion(q) {
+  if (!state || state.completed) return;
+  if (!Number.isFinite(q)) return;
+  const currentQ = Number(state.index || 1);
+  const maxReachedQ = Math.max(currentQ, Number(state.max_reached_index || currentQ));
+  if (q > maxReachedQ) return;
+  const res = await fetch(gotoUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q })
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    document.getElementById('feedback').textContent = data.error || 'No puedes avanzar desde este menu.';
+    return;
+  }
+  await fetchState();
+}
+
+async function sendHeartbeat() {
+  if (!state || state.completed) return;
+  try {
+    await fetch(heartbeatUrl, { method: 'POST' });
+  } catch (_) {
+    // ignore transient network errors
+  }
+}
+
+document.getElementById('prevBtn').addEventListener('click', goPrev);
+document.getElementById('submitBtn').addEventListener('click', submitAnswer);
+fetchState();
+heartbeatHandle = setInterval(sendHeartbeat, 5000);
+window.addEventListener('beforeunload', () => {
+  try {
+    navigator.sendBeacon(heartbeatUrl);
+  } catch (_) {}
+});
+</script>
+{% endblock %}

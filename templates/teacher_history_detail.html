@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <div class="history-head">
+    <h1>Detalle de Examen Guardado #{{ archive_id }}</h1>
+    <a class="btn-link" href="{{ url_for('teacher_history_page') }}">Volver a Historial</a>
+  </div>
+  <div class="meta">Guardado: {{ archive_saved_at }} UTC por {{ archive_saved_by }}</div>
+
+  <section class="grid-2">
+    <article class="card-lite">
+      <h3>Datos de sesion</h3>
+      <div class="small">Alumno: <strong>{{ session_info.student_name }}</strong></div>
+      <div class="small">Correo: <strong>{{ session_info.student_email }}</strong></div>
+      <div class="small">Token: <code>{{ session_info.session_token }}</code></div>
+      <div class="small">Inicio: {{ session_info.started_at }} UTC</div>
+      <div class="small">Fin: {{ session_info.finished_at or '-' }} UTC</div>
+    </article>
+    <article class="card-lite">
+      <h3>Metricas</h3>
+      <div class="small">Puntaje: <strong>{{ metrics.score }}/{{ metrics.total_items }}</strong></div>
+      <div class="small">Respondidas: <strong>{{ metrics.answered_count }}</strong></div>
+      <div class="small">Tiempo total: <strong>{{ metrics.elapsed_seconds }}s</strong></div>
+      <div class="small">Estado: <strong>{{ 'Finalizado' if metrics.completed else 'En curso' }}</strong></div>
+    </article>
+  </section>
+
+  <h2 style="margin-top:14px;">Grafica de Tiempo por Respuesta</h2>
+  <div class="time-chart">
+    {% set max_time = (timings|map(attribute='seconds_total')|max) if timings else 1 %}
+    {% for t in timings %}
+    {% set width = ((t.seconds_total / max_time) * 100) if max_time else 0 %}
+    <div class="bar-row">
+      <div class="bar-label">P{{ t.question_number }}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width: {{ '%.2f'|format(width) }}%;"></div>
+      </div>
+      <div class="bar-value">{{ t.seconds_total }}s</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h2 style="margin-top:14px;">Respuestas y Terminal</h2>
+  <div class="responses">
+    {% for r in responses %}
+    <div class="resp-item {{ 'ok' if r.is_correct else 'bad' }}">
+      <div><strong>Pregunta #{{ r.item_index + 1 }}</strong> - {{ r.item_type|upper }}</div>
+      <div class="small">{{ r.prompt }}</div>
+      <div class="cmd">Respuesta: {{ r.user_answer }}</div>
+      <div class="small">Texto libre: {{ r.extra_text or '-' }}</div>
+      <div class="small">Distro: {{ r.distro_guess or '-' }}</div>
+      <div class="small">Fecha: {{ r.submitted_at }} UTC</div>
+      <div class="small">Resultado: {{ 'Correcta' if r.is_correct else 'Incorrecta' }}</div>
+      {% if r.command_trace_list %}
+      <div class="small" style="margin-top:6px;"><strong>Comandos tecleados:</strong></div>
+      <pre class="cmd">{{ '\n'.join(r.command_trace_list) }}</pre>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <h2 style="margin-top:14px;">Preguntas del Examen</h2>
+  <div class="responses">
+    {% for q in questions %}
+    <div class="resp-item">
+      <div><strong>#{{ loop.index }}</strong> - {{ q.type|upper }} - {{ q.id }}</div>
+      <div class="small">{{ q.prompt }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,178 @@
+﻿{% extends 'base.html' %}
+{% block content %}
+<section class="grid-3 teacher-layout">
+  <article class="card logos-col">
+    <div class="teacher-brand-logos">
+      <img src="{{ url_for('static', filename='images/ikusi_logo_local.png') }}" alt="IKUSI">
+      <img src="{{ url_for('static', filename='images/sat_logo_local.png') }}" alt="SAT">
+    </div>
+  </article>
+
+  <article class="card">
+    <h1>Dashboard Profesor</h1>
+    <p>Monitoreo en tiempo real de respuestas y avance por alumno.</p>
+    <div class="actions" style="margin-top:8px; margin-bottom:8px;">
+      <a class="btn-link" href="{{ url_for('teacher_history_page') }}">Historial</a>
+    </div>
+    <div class="meta" id="serverTime"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Alumno</th>
+          <th>Avance</th>
+          <th>Pregunta actual</th>
+          <th>Puntaje</th>
+          <th>Tiempo</th>
+          <th>Reinicios</th>
+          <th>Estado</th>
+          <th>Accion</th>
+        </tr>
+      </thead>
+      <tbody id="sessionsBody"></tbody>
+    </table>
+  </article>
+
+  <article class="card">
+    <h2>Ultimas respuestas</h2>
+    <div class="responses" id="responsesBox"></div>
+    <h2 style="margin-top:14px;">Distros</h2>
+    <div class="responses" id="distrosBox"></div>
+    <h2 style="margin-top:14px;">Tiempo por Pregunta</h2>
+    <div class="responses" id="timingsBox"></div>
+  </article>
+</section>
+
+<script>
+const resetBaseUrl = "{{ url_for('teacher_reset_exam', token='__TOKEN__') }}";
+const deleteBaseUrl = "{{ url_for('teacher_delete_exam', token='__TOKEN__') }}";
+const saveBaseUrl = "{{ url_for('teacher_save_exam', token='__TOKEN__') }}";
+
+function fmtSeconds(total) {
+  const s = Math.max(0, Number(total || 0));
+  const h = String(Math.floor(s / 3600)).padStart(2, '0');
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const sec = String(Math.floor(s % 60)).padStart(2, '0');
+  return `${h}:${m}:${sec}`;
+}
+
+async function refreshDashboard() {
+  const res = await fetch("{{ url_for('teacher_live') }}");
+  const data = await res.json();
+
+  document.getElementById('serverTime').textContent = `Actualizado: ${data.server_time} UTC`;
+
+  const body = document.getElementById('sessionsBody');
+  body.innerHTML = data.sessions.map(s => {
+    const status = s.completed ? 'Finalizado' : 'En curso';
+    return `<tr>
+      <td>${s.student_name}</td>
+      <td>${s.current_index}/${s.total_items}</td>
+      <td>#${s.current_question_number || s.current_index}</td>
+      <td>${s.score}/${s.total_items}</td>
+      <td>${fmtSeconds(s.elapsed_seconds)}</td>
+      <td>${s.resets_count || 0}</td>
+      <td>${status}</td>
+      <td>
+        <button type="button" class="save-btn" data-token="${s.session_token}">Guardar examen</button>
+        <button type="button" class="secondary reset-btn" data-token="${s.session_token}">Reset examen</button>
+        <button type="button" class="danger delete-btn" data-token="${s.session_token}" data-protected="${s.is_archived ? '1' : '0'}">${s.is_archived ? 'Borrar protegido' : 'Borrar examen'}</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const box = document.getElementById('responsesBox');
+  box.innerHTML = data.responses.map(r => `
+    <div class="resp-item ${r.is_correct ? 'ok' : 'bad'}">
+      <div><strong>${r.student_name}</strong> - ${r.item_type.toUpperCase()} #${r.item_index + 1}</div>
+      <div class="small">${r.prompt}</div>
+      <div class="cmd">Respuesta: ${r.user_answer}</div>
+      <div class="small">Texto libre: ${r.extra_text || '-'}</div>
+      <div class="small">Distro: ${r.distro_guess || '-'}</div>
+      <div class="small">Imagen distro: ${r.distro_image_name || '-'}</div>
+      <div class="small">${r.is_correct ? 'Correcta' : 'Incorrecta'} - ${r.submitted_at} UTC</div>
+    </div>
+  `).join('');
+
+  const db = document.getElementById('distrosBox');
+  const distros = data.distros || [];
+  db.innerHTML = distros.map((d, i) => `
+    <div class="resp-item">
+      <div><strong>Distros ${i + 1} de ${distros.length}</strong></div>
+      <div class="small"><strong>${d.student_name}</strong> - Pregunta #${Number(d.item_index) + 1}</div>
+      <div class="cmd">Respuesta distro: ${d.distro_guess}</div>
+      <div class="small">Esperado: ${d.distro_expected_name || '-'} (${d.distro_image_name || '-'})</div>
+      <div class="small">Validacion: ${d.distro_guess_match ? 'Coincide' : 'No coincide'}</div>
+      <div class="small">${d.submitted_at} UTC</div>
+    </div>
+  `).join('') || '<div class="small">Sin respuestas de distro aun.</div>';
+
+  const tb = document.getElementById('timingsBox');
+  tb.innerHTML = (data.timings || []).map(t => `
+    <div class="resp-item">
+      <div><strong>${t.student_name}</strong> - Pregunta #${Number(t.item_index) + 1}</div>
+      <div class="small">Tiempo acumulado: <strong>${fmtSeconds(t.seconds_total)}</strong></div>
+    </div>
+  `).join('');
+
+  document.querySelectorAll('.reset-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const token = btn.dataset.token;
+      if (!token) return;
+      const ok = window.confirm('Esto reiniciara TODO el examen del alumno. ¿Continuar?');
+      if (!ok) return;
+      const rr = await fetch(resetBaseUrl.replace('__TOKEN__', token), { method: 'POST' });
+      const j = await rr.json();
+      if (!rr.ok) {
+        alert(j.error || 'No se pudo resetear');
+        return;
+      }
+      await refreshDashboard();
+    });
+  });
+
+  document.querySelectorAll('.save-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const token = btn.dataset.token;
+      if (!token) return;
+      const rr = await fetch(saveBaseUrl.replace('__TOKEN__', token), { method: 'POST' });
+      const j = await rr.json();
+      if (!rr.ok) {
+        alert(j.error || 'No se pudo guardar');
+        return;
+      }
+      alert(`Guardado OK. ID: ${j.archive_id} - ${j.saved_at} UTC`);
+    });
+  });
+
+  document.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const token = btn.dataset.token;
+      if (!token) return;
+      const isProtected = String(btn.dataset.protected || '0') === '1';
+      let protectedPassword = '';
+      if (isProtected) {
+        const entered = window.prompt('Este examen esta protegido. Escribe el password para borrarlo:');
+        if (entered === null) return;
+        protectedPassword = String(entered || '').trim();
+      }
+      const ok = window.confirm('Esto ELIMINARA por completo el examen del alumno. Esta accion no se puede deshacer. ¿Continuar?');
+      if (!ok) return;
+      const rr = await fetch(deleteBaseUrl.replace('__TOKEN__', token), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protected_password: protectedPassword })
+      });
+      const j = await rr.json();
+      if (!rr.ok) {
+        alert(j.error || 'No se pudo borrar el examen');
+        return;
+      }
+      await refreshDashboard();
+    });
+  });
+}
+
+refreshDashboard();
+setInterval(refreshDashboard, 2000);
+</script>
+{% endblock %}

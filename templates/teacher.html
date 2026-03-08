@@ -95,7 +95,7 @@ async function refreshDashboard() {
   }).join('');
 
   const box = document.getElementById('responsesBox');
-  box.innerHTML = data.responses.map(r => `
+  box.innerHTML = (data.responses || []).slice(0, 5).map(r => `
     <div class="resp-item ${r.is_correct ? 'ok' : 'bad'}">
       <div><strong>${esc(r.student_name)}</strong> - ${esc((r.item_type || '').toUpperCase())} #${Number(r.item_index) + 1}</div>
       <div class="small">${esc(r.prompt)}</div>
@@ -109,7 +109,7 @@ async function refreshDashboard() {
   `).join('');
 
   const db = document.getElementById('distrosBox');
-  const distros = data.distros || [];
+  const distros = (data.distros || []).slice(0, 5);
   db.innerHTML = distros.map((d, i) => `
     <div class="resp-item">
       <div><strong>Distros ${i + 1} de ${distros.length}</strong></div>
@@ -152,7 +152,7 @@ async function refreshDashboard() {
 
   const riskList = data.student_progress || [];
   const riskBox = document.getElementById('riskBox');
-  riskBox.innerHTML = riskList.slice(0, 20).map(sp => `
+  riskBox.innerHTML = riskList.slice(0, 5).map(sp => `
     <div class="resp-item ${sp.risk_level === 'alto' ? 'bad' : (sp.risk_level === 'medio' ? 'warn' : 'ok')}">
       <div><strong>${esc(sp.student_name || '-')}</strong> (${esc(sp.student_email || '-')})</div>
       <div class="small">Riesgo: <strong>${esc(sp.risk_level || 'bajo')}</strong> (${Number(sp.risk_prob || 0).toFixed(3)}) - Modelo: ${esc(sp.risk_model || 'heuristic')}</div>

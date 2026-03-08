@@ -133,6 +133,10 @@ function renderState(data) {
   if (newIndex !== currentQuestionIndex) {
     currentQuestionIndex = newIndex;
     currentShellCommandLog = Array.isArray(data.existing_command_trace) ? data.existing_command_trace.slice(0, 120) : [];
+    // Reinicia shell al cambiar de pregunta para no arrastrar cambios (ej. borrado de notas.txt).
+    shellState = null;
+    shellHistory = [];
+    shellHistoryIdx = -1;
   }
 
   if (data.completed) {
@@ -913,7 +917,10 @@ function bindTerminal() {
   const runBtn = document.getElementById('runCmdBtn');
   const prompt = document.getElementById('shellPrompt');
   if (!input || !runBtn) return;
-  if (!shellState) shellState = initShellState();
+  // Cada pregunta shell inicia con un estado limpio del mini filesystem.
+  shellState = initShellState();
+  shellHistory = [];
+  shellHistoryIdx = -1;
   if (prompt) prompt.textContent = shellPrompt();
 
   const execute = () => {

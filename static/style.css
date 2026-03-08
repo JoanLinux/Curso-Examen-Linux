@@ -15,6 +15,7 @@ body {
   font-family: "Segoe UI", Tahoma, sans-serif;
   background: radial-gradient(circle at top left, #dfeeff, #eef5ff 34%, #f6f9fc 62%, #edf2f7);
   color: var(--text);
+  overflow-x: hidden;
 }
 
 .topbar {
@@ -393,18 +394,34 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   .grid-2 { grid-template-columns: 1fr; }
   .grid-3 { grid-template-columns: 1fr; }
   .logos-col { position: static; }
-  .topbar { gap: 10px; overflow-x: auto; }
+  .topbar { gap: 10px; overflow-x: hidden; }
   .question-layout { grid-template-columns: 1fr; }
   .mascot-card > img { max-width: 220px; height: auto; }
   .exam-workspace { grid-template-columns: 1fr; }
-  #questionNav { grid-template-columns: repeat(6, 1fr); }
-  .question-nav { order: -1; }
+  #questionNav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    width: 100%;
+    overflow-x: hidden;
+  }
+  .question-nav { order: -1; width: 100%; min-width: 0; }
+  .q-chip { min-width: 0; }
   .teacher-layout .card { overflow: hidden; }
   table { display: block; overflow-x: auto; white-space: nowrap; }
 }
 
 @media (max-width: 640px) {
   body { font-size: 14px; }
+  .container,
+  .card,
+  .exam-workspace,
+  .question-layout,
+  .question-main,
+  .question-block,
+  .terminal,
+  .image-hotspot-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
   .container { margin: 10px auto; padding: 0 8px; }
   .card { padding: 12px; border-radius: 10px; }
   .topbar {
@@ -430,21 +447,26 @@ td button { margin-right: 6px; margin-bottom: 4px; }
     min-height: 42px;
   }
   .question-nav {
-    position: sticky;
-    top: 0;
+    position: static;
     z-index: 6;
+    overflow: hidden;
   }
   #questionNav {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
-    overflow-x: auto;
-    padding-bottom: 4px;
+    max-height: none;
+    overflow-y: visible;
+    overflow-x: hidden;
+    padding: 0;
     scrollbar-width: thin;
   }
   .q-chip {
-    flex: 0 0 38px;
-    min-width: 38px;
+    width: 100%;
+    min-width: 0;
     padding: 8px 0;
+    font-size: 13px;
+    line-height: 1;
   }
   .terminal-screen {
     min-height: 120px;
@@ -462,8 +484,28 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   }
   .terminal-input input { min-width: 0; width: 100%; }
   .terminal-input button { width: 100%; }
+  .image-hotspot-wrap img { max-height: 240px; object-fit: contain; }
   .cover-logos img { width: min(260px, 90vw); }
-  .mascot-card > img { max-width: 180px; }
+  .mascot-card { padding: 8px; }
+  .mascot-card > img {
+    width: 100%;
+    max-width: 170px;
+    max-height: 150px;
+    height: auto;
+    margin: 0 auto;
+  }
+  .sponsor-strip {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .sponsor-strip img {
+    width: 100%;
+    max-height: 42px;
+    padding: 3px 4px;
+    object-fit: contain;
+    object-position: center;
+    display: block;
+  }
   .teacher-brand-logos img { max-height: 96px; }
   th, td { padding: 6px; font-size: 12px; }
   .bar-row { grid-template-columns: 34px 1fr 54px; gap: 6px; }

@@ -678,7 +678,7 @@ SHELL_EXERCISES = [
         "title": "Busqueda de archivos",
         "prompt": "Encuentra archivos .log modificados en los ultimos 2 dias dentro de /var/log.",
         "terminal_hint": "alumno@linux:~$",
-        "accepted": [r"^find\s+/var/log\s+-type\s+f\s+-name\s+\"?\*\.log\"?\s+-mtime\s+-2$"],
+        "accepted": [r"^find\s+/var/log\s+-type\s+f\s+-name\s+[\"']?\*\.log[\"']?\s+-mtime\s+-2$"],
         "expected": "find /var/log -type f -name '*.log' -mtime -2",
         "success_output": "/var/log/syslog\n/var/log/auth.log",
     },

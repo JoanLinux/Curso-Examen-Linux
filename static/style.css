@@ -398,4 +398,74 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   .mascot-card > img { max-width: 220px; height: auto; }
   .exam-workspace { grid-template-columns: 1fr; }
   #questionNav { grid-template-columns: repeat(6, 1fr); }
+  .question-nav { order: -1; }
+  .teacher-layout .card { overflow: hidden; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+@media (max-width: 640px) {
+  body { font-size: 14px; }
+  .container { margin: 10px auto; padding: 0 8px; }
+  .card { padding: 12px; border-radius: 10px; }
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+  .brand-wrap { min-width: 0; width: 100%; }
+  .topbar nav { width: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+  .topbar a { margin-left: 0; }
+  .exam-head { flex-direction: column; align-items: flex-start; }
+  .head-metrics { width: 100%; }
+  .badge { padding: 7px 10px; font-size: 13px; }
+  .badge.timer { margin-left: auto; min-width: 92px; }
+  .actions {
+    position: sticky;
+    bottom: 0;
+    background: linear-gradient(180deg, rgba(244, 247, 251, 0), rgba(244, 247, 251, .96) 30%);
+    padding-top: 8px;
+    z-index: 5;
+  }
+  .actions button {
+    width: 100%;
+    min-height: 42px;
+  }
+  .question-nav {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+  }
+  #questionNav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+  .q-chip {
+    flex: 0 0 38px;
+    min-width: 38px;
+    padding: 8px 0;
+  }
+  .terminal-screen {
+    min-height: 120px;
+    font-size: 13px;
+    padding: 10px;
+  }
+  .terminal-input {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .terminal-input > span {
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .terminal-input input { min-width: 0; width: 100%; }
+  .terminal-input button { width: 100%; }
+  .cover-logos img { width: min(260px, 90vw); }
+  .mascot-card > img { max-width: 180px; }
+  .teacher-brand-logos img { max-height: 96px; }
+  th, td { padding: 6px; font-size: 12px; }
+  .bar-row { grid-template-columns: 34px 1fr 54px; gap: 6px; }
+  .bar-value { font-size: 12px; }
 }

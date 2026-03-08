@@ -39,6 +39,22 @@
 
   <h2 style="margin-top:14px;">Historial de intentos</h2>
   <div class="responses" id="attemptsBox"></div>
+
+  <h2 style="margin-top:14px;">Lectura Pedagogica</h2>
+  <div class="card-lite">
+    <table>
+      <thead>
+        <tr>
+          <th>Indicador</th>
+          <th>Valor</th>
+          <th>Lectura pedagogica</th>
+          <th>Accion sugerida</th>
+        </tr>
+      </thead>
+      <tbody id="pedagogyBody"></tbody>
+    </table>
+    <div id="pedagogySummary" class="small" style="margin-top:10px;"></div>
+  </div>
 </section>
 
 <script>
@@ -160,6 +176,117 @@ async function loadDetail(studentKey) {
       <div class="small">Tiempo: ${fmtSeconds(a.elapsed_seconds || 0)} | Reinicios: ${Number(a.resets_count || 0)}</div>
     </div>
   `).join('') || '<div class="small">Sin intentos.</div>';
+
+  const attempts = data.attempts_timeline || [];
+  const completedAttempts = attempts.filter(x => !!x.completed);
+  const firstCompleted = completedAttempts.length ? completedAttempts[0] : null;
+  const lastCompleted = completedAttempts.length ? completedAttempts[completedAttempts.length - 1] : null;
+  const firstPct = Number((firstCompleted && firstCompleted.score_pct) || 0);
+  const lastPct = Number((lastCompleted && lastCompleted.score_pct) || 0);
+  const improvement = lastPct - firstPct;
+
+  const secondRate = Number(k.second_attempt_fix_rate_pct || 0);
+  const secondCases = k.second_attempt_fix_cases || {};
+  const conceptualErr = Number((k.error_severity || {}).conceptual || 0);
+  const syntaxErr = Number((k.error_severity || {}).sintaxis || 0);
+  const riskProb = Number(ml.risk_prob || 0);
+  const riskLevel = String(ml.risk_level || 'bajo');
+  const weakTopic = (k.precision_by_topic || []).slice().sort((a, b) => Number(a.precision_pct || 0) - Number(b.precision_pct || 0))[0];
+  const slowest = slow[0] || null;
+
+  const rows = [];
+  rows.push({
+    kpi: 'Riesgo ML',
+    value: `${riskLevel} (${riskProb.toFixed(3)})`,
+    read: riskLevel === 'alto'
+      ? 'Requiere intervencion pronta; alto riesgo de bajo desempeno sostenido.'
+      : (riskLevel === 'medio'
+        ? 'Necesita acompanamiento focalizado para evitar estancamiento.'
+        : 'Desempeno estable con bajo riesgo academico.'),
+    action: riskLevel === 'alto'
+      ? 'Tutoria 1:1 y practica guiada por bloques.'
+      : (riskLevel === 'medio'
+        ? 'Refuerzo semanal por temas debiles.'
+        : 'Mantener ritmo y retos de mayor dificultad.')
+  });
+  rows.push({
+    kpi: 'Evolucion de puntaje',
+    value: `${firstPct.toFixed(2)}% -> ${lastPct.toFixed(2)}% (delta ${improvement.toFixed(2)}%)`,
+    read: improvement >= 10
+      ? 'Mejora clara entre intentos; evidencia aprendizaje progresivo.'
+      : (improvement > 0
+        ? 'Mejora ligera; conviene consolidar con practica adicional.'
+        : 'Sin mejora o retroceso; revisar base conceptual.'),
+    action: improvement >= 10
+      ? 'Subir dificultad de ejercicios.'
+      : (improvement > 0
+        ? 'Repetir ejercicios similares con retroalimentacion.'
+        : 'Reexplicar fundamentos y evaluar nuevamente.')
+  });
+  rows.push({
+    kpi: '2do intento corrige',
+    value: `${secondRate.toFixed(2)}% (${Number(secondCases.fixed || 0)}/${Number(secondCases.total || 0)})`,
+    read: secondRate >= 70
+      ? 'Buena capacidad de autocorreccion.'
+      : (secondRate >= 40
+        ? 'Autocorreccion parcial; necesita pistas mas estructuradas.'
+        : 'Baja autocorreccion; requiere intervencion directa.'),
+    action: secondRate >= 70
+      ? 'Mantener dinamica de ensayo/error.'
+      : (secondRate >= 40
+        ? 'Dar checklist de validacion antes de enviar.'
+        : 'Practica asistida paso a paso.')
+  });
+  rows.push({
+    kpi: 'Tipo de error',
+    value: `Conceptual/Sintaxis: ${conceptualErr}/${syntaxErr}`,
+    read: conceptualErr > syntaxErr
+      ? 'Predominan errores de comprension del comando o del problema.'
+      : (syntaxErr > conceptualErr
+        ? 'Predominan errores de forma/sintaxis en comandos.'
+        : 'Balanceado entre comprension y sintaxis.'),
+    action: conceptualErr > syntaxErr
+      ? 'Reforzar conceptos y criterio de seleccion de comandos.'
+      : (syntaxErr > conceptualErr
+        ? 'Practicar estructura exacta de comandos en mini-shell.'
+        : 'Combinar teoria corta + practica guiada.')
+  });
+  rows.push({
+    kpi: 'Tema mas debil',
+    value: weakTopic ? `${weakTopic.topic} (${Number(weakTopic.precision_pct || 0).toFixed(2)}%)` : 'Sin datos',
+    read: weakTopic
+      ? 'Es el principal cuello de botella actual del alumno.'
+      : 'Aun no hay volumen suficiente para detectar tema debil.',
+    action: weakTopic
+      ? `Asignar bloque de ejercicios enfocados en: ${weakTopic.topic}.`
+      : 'Continuar recolectando respuestas.'
+  });
+  rows.push({
+    kpi: 'Pregunta mas tardada',
+    value: slowest ? `P${Number(slowest.question_number || 0)} - ${fmtSeconds(slowest.seconds_total || 0)}` : 'Sin datos',
+    read: slowest
+      ? `${slowest.item_id || 'sin_id'}: indica friccion operacional en ese reactivo.`
+      : 'No hay tiempos para inferir friccion.',
+    action: slowest
+      ? 'Revisar esa pregunta en clase y explicar estrategia de resolucion.'
+      : 'Registrar al menos un intento completo.'
+  });
+
+  document.getElementById('pedagogyBody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.kpi)}</td>
+      <td>${esc(r.value)}</td>
+      <td>${esc(r.read)}</td>
+      <td>${esc(r.action)}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('pedagogySummary').innerHTML = `
+    <strong>Lectura global:</strong>
+    ${riskLevel === 'alto' ? 'Alumno prioritario para apoyo inmediato.' : (riskLevel === 'medio' ? 'Alumno con riesgo moderado que requiere seguimiento.' : 'Alumno estable.')}
+    ${improvement > 0 ? ` Muestra mejora acumulada de ${improvement.toFixed(2)}%.` : ' No muestra mejora acumulada.'}
+    ${weakTopic ? ` El foco recomendado es ${esc(weakTopic.topic)}.` : ''}
+  `;
 }
 
 document.getElementById('studentSel').addEventListener('change', async (e) => {

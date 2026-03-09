@@ -349,14 +349,16 @@ function initShellState() {
           'bin:x:2:2:bin:/bin:/usr/sbin/nologin\n' +
           'sys:x:3:3:sys:/dev:/usr/sbin/nologin\n' +
           'sync:x:4:65534:sync:/bin:/bin/sync\n' +
-          'games:x:5:60:games:/usr/games:/usr/sbin/nologin\n'
+          'games:x:5:60:games:/usr/games:/usr/sbin/nologin\n' +
+          'operador:x:1101:1101:Operador Linux:/home/operador:/bin/bash\n'
         ),
         'shadow': createFile(
           'root:$6$u0q5J8av$4y9NnY4nM4o4t4Wj1B2QGQw3y6dJ9m7yP6jS8f8r2V8aK2w9Dk1Qm4s2N7JrI9mH1R5mQ2t3L8j2f6W8Z1mQ1:19600:0:99999:7:::\n' +
           'daemon:*:19600:0:99999:7:::\n' +
           'bin:*:19600:0:99999:7:::\n' +
           'sys:*:19600:0:99999:7:::\n' +
-          'alumno:$6$gS8vL2kP$Y8vN0r4xW2k6P1zR3c9mJ5qL0wQ7xH8aD2nM4pS6vB1yT9kL3mN8pQ2rV6xC1zH4:19600:0:99999:7:::\n'
+          'alumno:$6$gS8vL2kP$Y8vN0r4xW2k6P1zR3c9mJ5qL0wQ7xH8aD2nM4pS6vB1yT9kL3mN8pQ2rV6xC1zH4:19600:0:99999:7:::\n' +
+          'operador:$6$OPEr4D0r$L5q8x9N4xV2mP8rY1qkY7AaL9xM4qW1hQ9F5bV2xM6hL0wP4vZ2tN8cR6jB3kQ1:19620:0:99999:7:::\n'
         ),
       }),
       tmp: createDir({}),
@@ -501,6 +503,7 @@ const helpMap = {
   tar: "Uso: tar [opciones] archivo\nEjemplos: tar -czf respaldo.tar.gz /etc ; tar -xzf respaldo.tar.gz",
   chmod: "Uso: chmod [opciones] modo archivo\nEjemplo: chmod 700 script.sh",
   chown: "Uso: chown [opciones] propietario[:grupo] archivo\nEjemplo: chown alumno:soporte script.sh",
+  passwd: "Uso: passwd [USUARIO]\nCambia la contrasena del usuario (simulado).",
 };
 
 function getBaseCmd(raw) {
@@ -769,6 +772,22 @@ function simulateFsCommand(tokens, raw) {
     return out.join('\n');
   }
 
+  if (cmd === 'passwd') {
+    const user = args[0] || shellState.user;
+    const shadowNode = getNode('/etc/shadow');
+    if (!shadowNode || shadowNode.type !== 'file') return "passwd: cannot update password database";
+    const lines = (shadowNode.content || '').split('\n').filter(Boolean);
+    const idx = lines.findIndex(line => line.startsWith(`${user}:`));
+    if (idx < 0) return `passwd: user '${user}' does not exist`;
+    const stamp = String(Date.now()).slice(-8);
+    const newHash = `$6$lab${stamp}$SIMULATEDHASHVALUE${stamp}`;
+    const parts = lines[idx].split(':');
+    parts[1] = newHash;
+    lines[idx] = parts.join(':');
+    shadowNode.content = `${lines.join('\n')}\n`;
+    return "Enter new UNIX password:\nRetype new UNIX password:\npasswd: password updated successfully";
+  }
+
   if (cmd === 'find') {
     const startArg = args[0] || '.';
     const startPath = normalizePath(startArg, shellState.cwd);
@@ -866,7 +885,7 @@ function fakeShellOutput(cmd) {
     return helpMap[topic] ? `MANUAL (${topic})\n${helpMap[topic]}` : `No manual entry for ${topic}`;
   }
   if (c === 'help') {
-    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop systemctl journalctl lpstat tar chmod chown\nUsa '<comando> --help' o 'man <comando>'.";
+    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop systemctl journalctl lpstat tar chmod chown passwd\nUsa '<comando> --help' o 'man <comando>'.";
   }
   if (c.startsWith('help ')) {
     const topic = c.split(/\s+/)[1];

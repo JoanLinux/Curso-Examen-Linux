@@ -484,6 +484,15 @@ td button { margin-right: 6px; margin-bottom: 4px; }
   font-size: 12px;
   font-weight: 700;
 }
+.distro-guide-table .distro-thumb {
+  width: 84px;
+  height: 52px;
+  object-fit: contain;
+  border: 1px solid #d7e1ec;
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+}
 
 @media (max-width: 900px) {
   .grid-2 { grid-template-columns: 1fr; }

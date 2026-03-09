@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="card">
+  <div class="history-head">
+    <h1>Distribuciones en Preguntas</h1>
+    <a class="btn-link" href="{{ url_for('teacher_page') }}">Volver a Dashboard</a>
+  </div>
+  <p class="meta">
+    Tabla de referencia para el maestro: distro esperada por numero de pregunta.
+    Rotacion: cada {{ rotation_size }} preguntas.
+  </p>
+
+  <table class="distro-guide-table">
+    <thead>
+      <tr>
+        <th># Pregunta</th>
+        <th>Distribucion esperada</th>
+        <th>Logo</th>
+        <th>Archivo imagen</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.question_number }}</td>
+        <td><strong>{{ r.name }}</strong></td>
+        <td><img class="distro-thumb" src="{{ r.image_url }}" alt="{{ r.name }}"></td>
+        <td><code>{{ r.image_name }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

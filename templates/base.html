@@ -16,6 +16,7 @@
       <a href="{{ url_for('index') }}">Inicio</a>
       {% if teacher_nav_mode %}
       <a class="nav-pill" href="{{ url_for('teacher_students_page') }}">APOYO IA ALUMNOS</a>
+      <a class="nav-pill" href="{{ url_for('teacher_distros_page') }}">DISTROS PREGUNTAS</a>
       {% endif %}
       {% if show_teacher_link %}
       <a href="{{ url_for('teacher_page') }}">Profesor</a>

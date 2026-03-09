@@ -525,10 +525,18 @@ COMMAND_QUESTIONS = [
     },
     {
         "id": "cmd_user_passwd",
-        "type": "mcq",
-        "prompt": "Selecciona el comando COMPLETO para cambiar la contrasena del usuario operador.",
-        "choices": ["passwd operador", "useradd -p operador", "usermod -p operador", "chpasswd operador"],
-        "correct": 0,
+        "type": "shell",
+        "title": "Laboratorio: Password de usuario",
+        "prompt": "Cambia la contrasena del usuario operador y valida en /etc/shadow que su registro existe con hash.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [
+            r"^(sudo\s+)?passwd\s+operador\s*&&\s*(sudo\s+)?grep\s+operador\s+/etc/shadow$",
+            r"^(sudo\s+)?passwd\s+operador\s*;\s*(sudo\s+)?grep\s+operador\s+/etc/shadow$",
+            r"^(sudo\s+)?passwd\s+operador\s*&&\s*(sudo\s+)?cat\s+/etc/shadow$",
+            r"^(sudo\s+)?passwd\s+operador\s*;\s*(sudo\s+)?cat\s+/etc/shadow$",
+        ],
+        "expected": "passwd operador && grep operador /etc/shadow",
+        "success_output": "Password actualizada y registro de operador verificado en /etc/shadow.",
     },
     {
         "id": "cmd_user_id",
@@ -647,12 +655,13 @@ SESSION3_IMAGE_QUESTIONS = [
 
 IMAGE_QUESTIONS = [
     {
-        "id": "img_top_issue",
+        "id": "img_top_issue_swap",
         "type": "image_click",
-        "prompt": "Observa la captura de top y haz click en el proceso que indica el problema principal.",
+        "prompt": "Observa la captura de top y haz click en la zona que indica presion de swap.",
         "image_url": "/CursoLinux/static/images/top_snapshot.png",
         "hotspots": [
             {"id": "cpu", "x": 3, "y": 17, "w": 92, "h": 9},
+            {"id": "mem", "x": 3, "y": 24, "w": 92, "h": 8},
             {"id": "swap", "x": 3, "y": 42, "w": 92, "h": 9},
             {"id": "zombie", "x": 3, "y": 30, "w": 92, "h": 9},
             {"id": "proc", "x": 3, "y": 58, "w": 92, "h": 14},
@@ -661,7 +670,67 @@ IMAGE_QUESTIONS = [
         "expected": "swap (uso alto de swap)",
     },
     {
-        "id": "img_htop_issue",
+        "id": "img_top_issue_cpu",
+        "type": "image_click",
+        "prompt": "En la captura de top, haz click en el indicador de CPU alta.",
+        "image_url": "/CursoLinux/static/images/top_snapshot.png",
+        "hotspots": [
+            {"id": "cpu", "x": 3, "y": 17, "w": 92, "h": 9},
+            {"id": "mem", "x": 3, "y": 24, "w": 92, "h": 8},
+            {"id": "swap", "x": 3, "y": 42, "w": 92, "h": 9},
+            {"id": "zombie", "x": 3, "y": 30, "w": 92, "h": 9},
+            {"id": "proc", "x": 3, "y": 58, "w": 92, "h": 14},
+        ],
+        "correct": "cpu",
+        "expected": "CPU saturada",
+    },
+    {
+        "id": "img_top_issue_mem",
+        "type": "image_click",
+        "prompt": "En la captura de top, haz click en la linea de memoria (Mem).",
+        "image_url": "/CursoLinux/static/images/top_snapshot.png",
+        "hotspots": [
+            {"id": "cpu", "x": 3, "y": 17, "w": 92, "h": 9},
+            {"id": "mem", "x": 3, "y": 24, "w": 92, "h": 8},
+            {"id": "swap", "x": 3, "y": 42, "w": 92, "h": 9},
+            {"id": "zombie", "x": 3, "y": 30, "w": 92, "h": 9},
+            {"id": "proc", "x": 3, "y": 58, "w": 92, "h": 14},
+        ],
+        "correct": "mem",
+        "expected": "Memoria (Mem)",
+    },
+    {
+        "id": "img_top_issue_zombie",
+        "type": "image_click",
+        "prompt": "Observa top y haz click en la zona donde se reportan procesos zombie.",
+        "image_url": "/CursoLinux/static/images/top_snapshot.png",
+        "hotspots": [
+            {"id": "cpu", "x": 3, "y": 17, "w": 92, "h": 9},
+            {"id": "mem", "x": 3, "y": 24, "w": 92, "h": 8},
+            {"id": "swap", "x": 3, "y": 42, "w": 92, "h": 9},
+            {"id": "zombie", "x": 3, "y": 30, "w": 92, "h": 9},
+            {"id": "proc", "x": 3, "y": 58, "w": 92, "h": 14},
+        ],
+        "correct": "zombie",
+        "expected": "contador de procesos zombie",
+    },
+    {
+        "id": "img_top_issue_proc_consumer",
+        "type": "image_click",
+        "prompt": "En top, haz click en el proceso que aparece como principal consumidor.",
+        "image_url": "/CursoLinux/static/images/top_snapshot.png",
+        "hotspots": [
+            {"id": "cpu", "x": 3, "y": 17, "w": 92, "h": 9},
+            {"id": "mem", "x": 3, "y": 24, "w": 92, "h": 8},
+            {"id": "swap", "x": 3, "y": 42, "w": 92, "h": 9},
+            {"id": "zombie", "x": 3, "y": 30, "w": 92, "h": 9},
+            {"id": "proc", "x": 3, "y": 58, "w": 92, "h": 14},
+        ],
+        "correct": "proc",
+        "expected": "proceso consumidor principal",
+    },
+    {
+        "id": "img_htop_issue_process_cpu",
         "type": "image_click",
         "prompt": "En la captura de htop, haz click en la zona que muestra un proceso consumidor de CPU.",
         "image_url": "/CursoLinux/static/images/htop_snapshot.png",
@@ -672,6 +741,19 @@ IMAGE_QUESTIONS = [
         ],
         "correct": "process",
         "expected": "proceso con CPU% alto",
+    },
+    {
+        "id": "img_htop_issue_bars_memswap",
+        "type": "image_click",
+        "prompt": "En htop, haz click en la zona de barras donde se ve presion de memoria/swap.",
+        "image_url": "/CursoLinux/static/images/htop_snapshot.png",
+        "hotspots": [
+            {"id": "bars", "x": 3, "y": 6, "w": 94, "h": 18},
+            {"id": "process", "x": 3, "y": 31, "w": 94, "h": 16},
+            {"id": "footer", "x": 3, "y": 86, "w": 94, "h": 10},
+        ],
+        "correct": "bars",
+        "expected": "barras de Mem/Swp",
     },
 ]
 
@@ -815,21 +897,21 @@ SHELL_EXERCISES = [
     {
         "id": "shell_shadow_hashes",
         "type": "shell",
-        "title": "Hashes en /etc/shadow",
-        "prompt": "Muestra el archivo /etc/shadow para identificar hashes.",
+        "title": "Laboratorio: Analisis de /etc/shadow",
+        "prompt": "Realiza el laboratorio: 1) muestra /etc/shadow y 2) filtra la cuenta operador para ubicar su hash.",
         "terminal_hint": "alumno@linux:~$",
         "accepted": [
-            r"^cat\s+/etc/shadow$",
-            r"^sudo\s+cat\s+/etc/shadow$",
-            r"^cat\s+shadow$",
-            r"^sudo\s+cat\s+shadow$",
-            r"^more\s+/etc/shadow$",
-            r"^sudo\s+more\s+/etc/shadow$",
-            r"^more\s+shadow$",
-            r"^sudo\s+more\s+shadow$",
+            r"^(sudo\s+)?cat\s+/etc/shadow\s*&&\s*(sudo\s+)?grep\s+operador\s+/etc/shadow$",
+            r"^(sudo\s+)?cat\s+/etc/shadow\s*;\s*(sudo\s+)?grep\s+operador\s+/etc/shadow$",
+            r"^(sudo\s+)?more\s+/etc/shadow\s*&&\s*(sudo\s+)?grep\s+operador\s+/etc/shadow$",
+            r"^(sudo\s+)?more\s+/etc/shadow\s*;\s*(sudo\s+)?grep\s+operador\s+/etc/shadow$",
+            r"^(sudo\s+)?cat\s+shadow\s*&&\s*(sudo\s+)?grep\s+operador\s+shadow$",
+            r"^(sudo\s+)?cat\s+shadow\s*;\s*(sudo\s+)?grep\s+operador\s+shadow$",
+            r"^(sudo\s+)?more\s+shadow\s*&&\s*(sudo\s+)?grep\s+operador\s+shadow$",
+            r"^(sudo\s+)?more\s+shadow\s*;\s*(sudo\s+)?grep\s+operador\s+shadow$",
         ],
-        "expected": "cat /etc/shadow",
-        "success_output": "Archivo /etc/shadow mostrado con hashes.",
+        "expected": "cat /etc/shadow && grep operador /etc/shadow",
+        "success_output": "Laboratorio completado: /etc/shadow revisado y cuenta operador localizada.",
     },
     {
         "id": "shell_systemctl_start_service",
@@ -1355,8 +1437,7 @@ def build_exam(student_key: Optional[str] = None, conn: Optional[sqlite3.Connect
     if mv_shell:
         shell.extend(_prefer_unseen(mv_shell, seen_ids, 1))
     remaining_shell = max(0, min(8, len(SHELL_EXERCISES)) - len(shell))
-    blocked_shell_ids = {"shell_shadow_hashes"} if cat_shell else set()
-    pool_shell = [q for q in other_shell if q not in shell and q["id"] not in blocked_shell_ids]
+    pool_shell = [q for q in other_shell if q not in shell]
     if pool_shell and remaining_shell > 0:
         shell.extend(_prefer_unseen(pool_shell, seen_ids, min(remaining_shell, len(pool_shell))))
     items = command + history + session3 + images + shell
@@ -1455,6 +1536,28 @@ def evaluate_item(item: dict, answer: str, command_trace: Optional[List[str]] = 
         )
         did_tail20 = any(re.match(r"^tail\s+-n\s+20(\s+/var/log/syslog)?$", cmd) for cmd in clean_trace)
         matched = (did_cat and did_grep) or (did_grep and did_tail20)
+
+    if not matched and item.get("id") == "cmd_user_passwd" and clean_trace:
+        did_passwd = any(re.match(r"^(sudo\s+)?passwd\s+operador$", cmd) for cmd in clean_trace)
+        did_verify = any(
+            re.match(r"^(sudo\s+)?grep\s+operador\s+/etc/shadow$", cmd)
+            or re.match(r"^(sudo\s+)?cat\s+/etc/shadow$", cmd)
+            or re.match(r"^(sudo\s+)?more\s+/etc/shadow$", cmd)
+            for cmd in clean_trace
+        )
+        matched = did_passwd and did_verify
+
+    if not matched and item.get("id") == "shell_shadow_hashes" and clean_trace:
+        did_show = any(
+            re.match(r"^(sudo\s+)?cat\s+(/etc/shadow|shadow)$", cmd)
+            or re.match(r"^(sudo\s+)?more\s+(/etc/shadow|shadow)$", cmd)
+            for cmd in clean_trace
+        )
+        did_filter = any(
+            re.match(r"^(sudo\s+)?grep\s+operador\s+(/etc/shadow|shadow)$", cmd)
+            for cmd in clean_trace
+        )
+        matched = did_show and did_filter
 
     feedback = item["success_output"] if matched else f"Comando no valido para la tarea. Esperado: {item['expected']}"
     return matched, feedback, item["expected"]
@@ -1874,6 +1977,36 @@ def create_app() -> Flask:
         if auth_error:
             return auth_error
         return render_template("teacher_students.html", show_teacher_link=True, teacher_nav_mode=True)
+
+    @app.get("/teacher/distros")
+    def teacher_distros_page():
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        with get_db() as conn:
+            row = conn.execute("SELECT COALESCE(MAX(total_items), 0) AS max_total FROM exam_sessions").fetchone()
+        default_total = len(build_exam())
+        max_total = int(row["max_total"] or 0) if row else 0
+        total_questions = max(default_total, max_total, 1)
+        distro_rows = []
+        for qn in range(1, total_questions + 1):
+            distro = DISTRO_ROTATION[(qn - 1) % len(DISTRO_ROTATION)]
+            distro_rows.append(
+                {
+                    "question_number": qn,
+                    "name": distro["name"],
+                    "image_name": distro["image"],
+                    "image_url": url_for("static", filename=f"images/distros/{distro['image']}"),
+                }
+            )
+        return render_template(
+            "teacher_distros.html",
+            rows=distro_rows,
+            total_questions=total_questions,
+            rotation_size=len(DISTRO_ROTATION),
+            show_teacher_link=True,
+            teacher_nav_mode=True,
+        )
 
     @app.get("/api/teacher/students")
     def teacher_students():

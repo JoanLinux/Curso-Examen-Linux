@@ -32,6 +32,7 @@
 const token = "{{ token }}";
 const stateUrl = "{{ url_for('exam_state', token=token) }}";
 const answerUrl = "{{ url_for('submit_answer', token=token) }}";
+const summaryUrl = "{{ url_for('exam_summary', token=token) }}";
 const prevUrl = "{{ url_for('prev_question', token=token) }}";
 const gotoUrl = "{{ url_for('goto_question', token=token) }}";
 const heartbeatUrl = "{{ url_for('exam_heartbeat', token=token) }}";
@@ -154,7 +155,13 @@ function renderState(data) {
       clearInterval(heartbeatHandle);
       heartbeatHandle = null;
     }
-    wrap.innerHTML = buildQuestionWrap(data.index || data.total, `<div class="result">Finalizaste. Puntaje: <strong>${data.score}/${data.total}</strong></div>`);
+    wrap.innerHTML = buildQuestionWrap(data.index || data.total, `
+      <div class="result">Finalizaste. Puntaje: <strong>${data.score}/${data.total}</strong></div>
+      <div id="studentSummaryWrap" class="card-lite" style="margin-top:12px;">
+        <div class="small">Cargando resumen detallado...</div>
+      </div>
+    `);
+    loadStudentSummary();
     progress.textContent = `Completado`;
     submitBtn.style.display = 'none';
     prevBtn.style.display = 'none';
@@ -229,6 +236,75 @@ function renderState(data) {
   }
 }
 
+function renderStudentSummary(summary) {
+  const wrap = document.getElementById('studentSummaryWrap');
+  if (!wrap) return;
+  const rows = summary.questions || [];
+  const strengths = summary.strengths || [];
+  const weak = summary.weaknesses || [];
+  const recs = summary.practice_recommendations || [];
+  const showCorrect = !!summary.show_correct_answers;
+
+  const tableRows = rows.map(r => `
+    <tr>
+      <td>P${Number(r.question_number || 0)}</td>
+      <td>${esc(r.topic || '-')}</td>
+      <td>${esc(r.status || '-')}</td>
+      <td>${esc(r.your_answer || '-')}</td>
+      <td>${showCorrect ? esc(r.correct_answer || '-') : '-'}</td>
+    </tr>
+  `).join('');
+
+  wrap.innerHTML = `
+    <h3 style="margin:0 0 8px;">Resumen inmediato</h3>
+    <div class="small">Puntaje: <strong>${Number(summary.score || 0)}/${Number(summary.total || 0)}</strong> | Tiempo: <strong>${formatElapsed(Number(summary.elapsed_seconds || 0))}</strong></div>
+    <div style="overflow:auto; margin-top:8px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Pregunta</th>
+            <th>Tema</th>
+            <th>Estado</th>
+            <th>Tu respuesta</th>
+            <th>Respuesta correcta</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+    <div class="grid-2" style="margin-top:10px;">
+      <article class="card-lite">
+        <h4 style="margin:0 0 6px;">Fortalezas</h4>
+        ${(strengths.map(s => `<div class="small"><strong>${esc(s.topic)}</strong>: ${Number(s.precision_pct || 0).toFixed(2)}%</div>`).join('')) || '<div class="small">Sin datos.</div>'}
+      </article>
+      <article class="card-lite">
+        <h4 style="margin:0 0 6px;">Areas de mejora</h4>
+        ${(weak.map(s => `<div class="small"><strong>${esc(s.topic)}</strong>: ${Number(s.precision_pct || 0).toFixed(2)}%</div>`).join('')) || '<div class="small">Sin datos.</div>'}
+      </article>
+    </div>
+    <div class="card-lite" style="margin-top:10px;">
+      <h4 style="margin:0 0 6px;">Recomendacion de practica</h4>
+      ${(recs.map(r => `<div class="small">- ${esc(r)}</div>`).join('')) || '<div class="small">Sin recomendaciones.</div>'}
+    </div>
+  `;
+}
+
+async function loadStudentSummary() {
+  const wrap = document.getElementById('studentSummaryWrap');
+  if (!wrap) return;
+  try {
+    const res = await fetch(summaryUrl);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      wrap.innerHTML = `<div class="small">${esc(data.error || 'No se pudo cargar el resumen')}</div>`;
+      return;
+    }
+    renderStudentSummary(data);
+  } catch (_) {
+    wrap.innerHTML = '<div class="small">No se pudo cargar el resumen.</div>';
+  }
+}
+
 function renderQuestionNav(data) {
   const wrap = document.getElementById('questionNav');
   if (!wrap || !data || !data.total) return;
@@ -288,6 +364,7 @@ function initShellState() {
     fs: createDir({
       home: createDir({
         alumno: createDir({
+          respaldo: createDir({}),
           lab: createDir({
             '.env': createFile('TOKEN=abc123\nMODE=dev\n'),
             '.config': createFile('theme=dark\nfont=mono\n'),
@@ -504,6 +581,8 @@ const helpMap = {
   chmod: "Uso: chmod [opciones] modo archivo\nEjemplo: chmod 700 script.sh",
   chown: "Uso: chown [opciones] propietario[:grupo] archivo\nEjemplo: chown alumno:soporte script.sh",
   passwd: "Uso: passwd [USUARIO]\nCambia la contrasena del usuario (simulado).",
+  sudo: "Uso: sudo <comando>\nEjemplo: sudo ss -tulnp",
+  ss: "Uso: ss [OPCION]...\n  -t  tcp\n  -u  udp\n  -l  sockets en escucha\n  -n  sin resolver nombres\n  -p  mostrar proceso",
 };
 
 function getBaseCmd(raw) {
@@ -772,6 +851,37 @@ function simulateFsCommand(tokens, raw) {
     return out.join('\n');
   }
 
+  if (cmd === 'ss') {
+    const validFlags = { t: false, u: false, l: false, n: false, p: false, a: false };
+    for (const a of args) {
+      if (!a.startsWith('-') || a === '-') return `ss: invalid argument '${a}'\n${helpMap.ss}`;
+      for (const ch of a.slice(1)) {
+        if (!(ch in validFlags)) return `ss: invalid option -- '${ch}'\n${helpMap.ss}`;
+        validFlags[ch] = true;
+      }
+    }
+    const showTcp = validFlags.t || (!validFlags.t && !validFlags.u);
+    const showUdp = validFlags.u || (!validFlags.t && !validFlags.u);
+    const listeningOnly = validFlags.l;
+    const showProc = validFlags.p;
+    const header = "Netid State  Recv-Q Send-Q Local Address:Port   Peer Address:Port Process";
+    const rows = [];
+    if (showTcp) {
+      rows.push(
+        `tcp   ${listeningOnly ? "LISTEN" : "ESTAB "} 0      128    0.0.0.0:22          0.0.0.0:*         ${showProc ? "users:((\"sshd\",pid=930,fd=3))" : "-"}`,
+        `tcp   ${listeningOnly ? "LISTEN" : "ESTAB "} 0      511    0.0.0.0:80          0.0.0.0:*         ${showProc ? "users:((\"apache2\",pid=1058,fd=4))" : "-"}`,
+        `tcp   ${listeningOnly ? "LISTEN" : "ESTAB "} 0      128    127.0.0.1:3306      0.0.0.0:*         ${showProc ? "users:((\"mysqld\",pid=1820,fd=21))" : "-"}`
+      );
+    }
+    if (showUdp) {
+      rows.push(
+        `udp   ${listeningOnly ? "UNCONN" : "ESTAB "} 0      0      0.0.0.0:68          0.0.0.0:*         ${showProc ? "users:((\"systemd-network\",pid=588,fd=15))" : "-"}`,
+        `udp   ${listeningOnly ? "UNCONN" : "ESTAB "} 0      0      127.0.0.53:53       0.0.0.0:*         ${showProc ? "users:((\"systemd-resolve\",pid=612,fd=13))" : "-"}`
+      );
+    }
+    return `${header}\n${rows.join('\n')}`;
+  }
+
   if (cmd === 'passwd') {
     const user = args[0] || shellState.user;
     const shadowNode = getNode('/etc/shadow');
@@ -885,7 +995,7 @@ function fakeShellOutput(cmd) {
     return helpMap[topic] ? `MANUAL (${topic})\n${helpMap[topic]}` : `No manual entry for ${topic}`;
   }
   if (c === 'help') {
-    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop systemctl journalctl lpstat tar chmod chown passwd\nUsa '<comando> --help' o 'man <comando>'.";
+    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop ss sudo systemctl journalctl lpstat tar chmod chown passwd\nUsa '<comando> --help' o 'man <comando>'.";
   }
   if (c.startsWith('help ')) {
     const topic = c.split(/\s+/)[1];

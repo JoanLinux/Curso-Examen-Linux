@@ -847,9 +847,12 @@ SHELL_EXERCISES = [
         "accepted": [
             r"^find\s+/home/alumno\s+-type\s+d\s+-name\s+\"?respaldo\"?$",
             r"^find\s+/home/alumno\s+-name\s+\"?respaldo\"?\s+-type\s+d$",
+            r"^find\s+/\s+-name\s+\"?respaldo\"?$",
+            r"^find\s+/\s+-type\s+d\s+-name\s+\"?respaldo\"?$",
+            r"^find\s+/\s+-name\s+\"?respaldo\"?\s+-type\s+d$",
         ],
         "expected": "find /home/alumno -type d -name respaldo",
-        "success_output": "/home/alumno/lab/respaldo",
+        "success_output": "/home/alumno/respaldo",
     },
     {
         "id": "shell_du_heavy",
@@ -1344,6 +1347,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE exam_sessions ADD COLUMN max_reached_index INTEGER NOT NULL DEFAULT 0")
         if "student_email" not in names:
             conn.execute("ALTER TABLE exam_sessions ADD COLUMN student_email TEXT NOT NULL DEFAULT ''")
+        if "summary_viewed_at" not in names:
+            conn.execute("ALTER TABLE exam_sessions ADD COLUMN summary_viewed_at TEXT")
         response_cols = conn.execute("PRAGMA table_info(responses)").fetchall()
         response_names = {c["name"] for c in response_cols}
         if "distro_guess" not in response_names:
@@ -1654,11 +1659,151 @@ def leave_question(conn: sqlite3.Connection, token: str, item_index: int, at_iso
         )
 
 
+TOPIC_PRACTICE_HINTS = {
+    "Procesos y rendimiento": "Practica top, htop, ps aux, kill -9 y analiza CPU/Mem/Swap.",
+    "Redes": "Practica ip a, ip route, ping, ss -tulnp y curl a endpoints internos.",
+    "Permisos y propiedad": "Practica chmod numerico/simbolico, chown y validacion con ls -l.",
+    "Logs y diagnostico": "Practica grep/tail/head sobre /var/log/syslog y /var/log/auth.log.",
+    "Gestion de paquetes": "Practica apt update, apt install, dpkg -l y apt remove.",
+    "Respaldo y restauracion": "Practica tar -czf, tar -xzf y validacion de contenido.",
+    "Archivos y filesystem": "Practica find, cat, df, du, mv y rutas absolutas/relativas.",
+    "Usuarios y cuentas": "Practica whoami, id, groups, last, passwd y /etc/shadow.",
+    "Firewall y seguridad": "Practica ufw status, habilitar/deshabilitar y ver reglas.",
+    "Comandos de shell": "Practica sintaxis exacta y lectura cuidadosa de flags.",
+}
+
+
+def expected_answer_text(item: Dict, include_correct_answer: bool = True) -> str:
+    if not include_correct_answer:
+        return ""
+    itype = item.get("type", "")
+    if itype == "mcq":
+        try:
+            idx = int(item.get("correct", 0))
+        except Exception:
+            idx = 0
+        choices = item.get("choices") or []
+        if isinstance(choices, list) and 0 <= idx < len(choices):
+            return str(choices[idx])
+        return str(idx)
+    if itype == "image_click":
+        return str(item.get("expected") or item.get("correct") or "")
+    return str(item.get("expected") or "")
+
+
+def session_summary(conn: sqlite3.Connection, token: str, include_correct_answer: bool = True, mark_viewed: bool = False) -> Optional[Dict]:
+    data = get_session_payload(conn, token)
+    if not data:
+        return None
+    row = data["row"]
+    if not int(row["completed"] or 0):
+        return {"error": "El examen aun no ha finalizado"}
+
+    if mark_viewed:
+        conn.execute(
+            "UPDATE exam_sessions SET summary_viewed_at = ? WHERE session_token = ?",
+            (utcnow_iso(), token),
+        )
+
+    items = data["items"]
+    responses = conn.execute(
+        """
+        SELECT item_index, item_id, item_type, user_answer, is_correct, expected, submitted_at
+        FROM responses
+        WHERE session_token = ?
+        ORDER BY item_index ASC
+        """,
+        (token,),
+    ).fetchall()
+    response_by_idx = {int(r["item_index"]): dict(r) for r in responses}
+
+    timings = conn.execute(
+        """
+        SELECT item_index, seconds_spent, last_entered_at
+        FROM question_timing
+        WHERE session_token = ?
+        ORDER BY item_index ASC
+        """,
+        (token,),
+    ).fetchall()
+    now_iso = utcnow_iso()
+    time_by_idx: Dict[int, int] = {}
+    for t in timings:
+        idx = int(t["item_index"])
+        extra = elapsed_seconds(t["last_entered_at"], now_iso) if t["last_entered_at"] else 0
+        time_by_idx[idx] = int(float(t["seconds_spent"] or 0) + extra)
+
+    per_question = []
+    topic_stats: Dict[str, Dict[str, float]] = defaultdict(lambda: {"total": 0, "correct": 0, "seconds": 0})
+    for idx, item in enumerate(items):
+        resp = response_by_idx.get(idx, {})
+        is_correct = bool(int(resp.get("is_correct") or 0))
+        topic = topic_for_item_id(str(item.get("id") or ""))
+        seconds_spent = int(time_by_idx.get(idx, 0))
+        topic_stats[topic]["total"] += 1
+        topic_stats[topic]["correct"] += 1 if is_correct else 0
+        topic_stats[topic]["seconds"] += seconds_spent
+        per_question.append(
+            {
+                "question_number": idx + 1,
+                "item_id": str(item.get("id") or ""),
+                "topic": topic,
+                "prompt": str(item.get("prompt") or ""),
+                "status": "Correcta" if is_correct else "Incorrecta",
+                "is_correct": is_correct,
+                "your_answer": str(resp.get("user_answer") or ""),
+                "correct_answer": expected_answer_text(item, include_correct_answer=include_correct_answer),
+                "seconds_spent": seconds_spent,
+            }
+        )
+
+    topic_rows = []
+    for topic, st in topic_stats.items():
+        total = int(st["total"])
+        correct = int(st["correct"])
+        seconds = int(st["seconds"])
+        precision = (correct / total * 100.0) if total else 0.0
+        avg_time = (seconds / total) if total else 0.0
+        topic_rows.append(
+            {
+                "topic": topic,
+                "total": total,
+                "correct": correct,
+                "precision_pct": round(precision, 2),
+                "avg_seconds": round(avg_time, 2),
+                "recommendation": TOPIC_PRACTICE_HINTS.get(topic, "Practica guiada en este tema."),
+            }
+        )
+
+    strengths = sorted(topic_rows, key=lambda x: (x["precision_pct"], x["total"]), reverse=True)[:3]
+    weaknesses = sorted(topic_rows, key=lambda x: (x["precision_pct"], -x["avg_seconds"], -x["total"]))[:3]
+    recommendations = [x["recommendation"] for x in weaknesses]
+
+    return {
+        "session_token": token,
+        "student_name": row["student_name"],
+        "student_email": row["student_email"],
+        "score": int(row["score"] or 0),
+        "total": int(row["total_items"] or 0),
+        "elapsed_seconds": elapsed_seconds(row["started_at"], row["finished_at"]),
+        "summary_viewed_at": row["summary_viewed_at"],
+        "show_correct_answers": bool(include_correct_answer),
+        "questions": per_question,
+        "topic_summary": topic_rows,
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "practice_recommendations": recommendations,
+    }
+
+
 def create_app() -> Flask:
     app = Flask(__name__, instance_path=str(INSTANCE_DIR))
     app.config["SECRET_KEY"] = os.environ.get("CURSO_LINUX_SECRET", "curso-linux-dev-key")
     app.config["TEACHER_USER"] = os.environ.get("CURSO_LINUX_TEACHER_USER", "teacher")
     app.config["TEACHER_PASSWORD"] = os.environ.get("CURSO_LINUX_TEACHER_PASSWORD", "ikusi2026")
+    app.config["SHOW_CORRECT_ANSWERS_TO_STUDENT"] = str(
+        os.environ.get("SHOW_CORRECT_ANSWERS_TO_STUDENT", "1")
+    ).strip().lower() not in {"0", "false", "no", "off"}
     init_db()
 
     def require_teacher_auth() -> Optional[Response]:
@@ -1695,11 +1840,11 @@ def create_app() -> Flask:
                 """
                 SELECT session_token
                 FROM exam_sessions
-                WHERE student_name = ? AND student_email = ? AND completed = 0
+                WHERE student_email = ? AND completed = 0
                 ORDER BY started_at DESC
                 LIMIT 1
                 """,
-                (student_name, student_email),
+                (student_email,),
             ).fetchone()
             if existing:
                 return redirect(url_for("exam_page", token=existing["session_token"]))
@@ -1794,6 +1939,21 @@ def create_app() -> Flask:
                     "answered_indices": [int(r["item_index"]) for r in answered_rows],
                 }
             )
+
+    @app.get("/api/exam/<token>/summary")
+    def exam_summary(token: str):
+        with get_db() as conn:
+            summary = session_summary(
+                conn,
+                token,
+                include_correct_answer=bool(app.config["SHOW_CORRECT_ANSWERS_TO_STUDENT"]),
+                mark_viewed=True,
+            )
+            if not summary:
+                return jsonify({"error": "Sesion no encontrada"}), 404
+            if summary.get("error"):
+                return jsonify({"error": summary["error"]}), 400
+            return jsonify(summary)
 
     @app.post("/api/exam/<token>/prev")
     def prev_question(token: str):
@@ -2264,6 +2424,214 @@ def create_app() -> Flask:
                 },
                 "responses_count": total_responses,
             }
+        )
+
+    @app.get("/api/teacher/session/<token>/summary")
+    def teacher_session_summary(token: str):
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        with get_db() as conn:
+            summary = session_summary(conn, token, include_correct_answer=True, mark_viewed=False)
+            if not summary:
+                return jsonify({"error": "Sesion no encontrada"}), 404
+            if summary.get("error"):
+                return jsonify({"error": summary["error"]}), 400
+
+            row = conn.execute(
+                "SELECT student_name, student_email FROM exam_sessions WHERE session_token = ?",
+                (token,),
+            ).fetchone()
+            if not row:
+                return jsonify({"error": "Sesion no encontrada"}), 404
+            target_key = student_key_for_cycle(row["student_name"], row["student_email"])
+            sessions_all = conn.execute(
+                "SELECT session_token, student_name, student_email, score, total_items, started_at, finished_at, completed FROM exam_sessions"
+            ).fetchall()
+            related = [dict(s) for s in sessions_all if student_key_for_cycle(s["student_name"], s["student_email"]) == target_key and int(s["completed"] or 0) == 1]
+
+        score_pcts = [
+            (int(s.get("score") or 0) / max(1, int(s.get("total_items") or 0))) * 100.0
+            for s in related
+        ]
+        elapsed_vals = [elapsed_seconds(s.get("started_at"), s.get("finished_at")) for s in related]
+        current_pct = (float(summary["score"]) / max(1, int(summary["total"]))) * 100.0
+        comparative = {
+            "student_attempts_completed": len(related),
+            "current_score_pct": round(current_pct, 2),
+            "student_avg_score_pct": round(float(statistics.mean(score_pcts)) if score_pcts else 0.0, 2),
+            "current_elapsed_seconds": int(summary["elapsed_seconds"]),
+            "student_avg_elapsed_seconds": int(statistics.mean(elapsed_vals)) if elapsed_vals else 0,
+            }
+        return jsonify({"summary": summary, "comparative": comparative})
+
+    @app.post("/api/teacher/session/<token>/question/<int:question_number>/grade")
+    def teacher_override_question_grade(token: str, question_number: int):
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        req = request.get_json(force=True, silent=True) or {}
+        is_correct_raw = req.get("is_correct")
+        if isinstance(is_correct_raw, bool):
+            is_correct = is_correct_raw
+        elif str(is_correct_raw).strip() in {"1", "true", "True", "si", "yes"}:
+            is_correct = True
+        elif str(is_correct_raw).strip() in {"0", "false", "False", "no"}:
+            is_correct = False
+        else:
+            return jsonify({"error": "is_correct invalido"}), 400
+
+        with get_db() as conn:
+            session_row = conn.execute(
+                "SELECT total_items FROM exam_sessions WHERE session_token = ?",
+                (token,),
+            ).fetchone()
+            if not session_row:
+                return jsonify({"error": "Sesion no encontrada"}), 404
+            total_items = int(session_row["total_items"] or 0)
+            if question_number < 1 or question_number > total_items:
+                return jsonify({"error": "Numero de pregunta invalido"}), 400
+            idx = question_number - 1
+            response_row = conn.execute(
+                "SELECT id FROM responses WHERE session_token = ? AND item_index = ?",
+                (token, idx),
+            ).fetchone()
+            if not response_row:
+                return jsonify({"error": "No hay respuesta registrada para esta pregunta"}), 404
+
+            conn.execute(
+                """
+                UPDATE responses
+                SET is_correct = ?, submitted_at = ?
+                WHERE session_token = ? AND item_index = ?
+                """,
+                (1 if is_correct else 0, utcnow_iso(), token, idx),
+            )
+            new_score = recalculate_score(conn, token)
+            conn.execute(
+                "UPDATE exam_sessions SET score = ? WHERE session_token = ?",
+                (new_score, token),
+            )
+        return jsonify(
+            {
+                "ok": True,
+                "question_number": question_number,
+                "is_correct": bool(is_correct),
+                "new_score": int(new_score),
+            }
+        )
+
+    @app.get("/api/teacher/session/<token>/summary.csv")
+    def teacher_session_summary_csv(token: str):
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        with get_db() as conn:
+            summary = session_summary(conn, token, include_correct_answer=True, mark_viewed=False)
+            if not summary:
+                return jsonify({"error": "Sesion no encontrada"}), 404
+            if summary.get("error"):
+                return jsonify({"error": summary["error"]}), 400
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["session_token", "student_name", "student_email", "score", "total", "elapsed_seconds"])
+        writer.writerow(
+            [
+                summary["session_token"],
+                summary["student_name"],
+                summary["student_email"],
+                summary["score"],
+                summary["total"],
+                summary["elapsed_seconds"],
+            ]
+        )
+        writer.writerow([])
+        writer.writerow(["question_number", "item_id", "topic", "status", "your_answer", "correct_answer", "seconds_spent", "prompt"])
+        for q in summary["questions"]:
+            writer.writerow(
+                [
+                    q["question_number"],
+                    q["item_id"],
+                    q["topic"],
+                    q["status"],
+                    q["your_answer"],
+                    q["correct_answer"],
+                    q["seconds_spent"],
+                    q["prompt"],
+                ]
+            )
+        content = buf.getvalue()
+        return Response(
+            content,
+            mimetype="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=session_{token}_summary.csv"},
+        )
+
+    @app.get("/api/teacher/session/<token>/summary.pdf")
+    def teacher_session_summary_pdf(token: str):
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        with get_db() as conn:
+            summary = session_summary(conn, token, include_correct_answer=True, mark_viewed=False)
+            if not summary:
+                return jsonify({"error": "Sesion no encontrada"}), 404
+            if summary.get("error"):
+                return jsonify({"error": summary["error"]}), 400
+
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.pdfgen import canvas
+            from reportlab.pdfbase import pdfdoc
+        except Exception:
+            return jsonify({"error": "PDF no disponible: falta reportlab en servidor"}), 500
+
+        import hashlib
+
+        original_md5 = hashlib.md5
+
+        def md5_compat(*args, **kwargs):
+            kwargs.pop("usedforsecurity", None)
+            return original_md5(*args, **kwargs)
+
+        pdfdoc.md5 = md5_compat
+        pdf_buf = io.BytesIO()
+        c = canvas.Canvas(pdf_buf, pagesize=A4)
+        width, height = A4
+        y = height - 36
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(36, y, f"Resumen de intento - {summary['student_name']} ({summary['student_email']})")
+        y -= 20
+        c.setFont("Helvetica", 10)
+        c.drawString(36, y, f"Sesion: {summary['session_token']}")
+        y -= 14
+        c.drawString(36, y, f"Puntaje: {summary['score']}/{summary['total']}  |  Tiempo: {summary['elapsed_seconds']}s")
+        y -= 18
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(36, y, "#")
+        c.drawString(58, y, "Estado")
+        c.drawString(116, y, "Tema")
+        c.drawString(260, y, "Tu respuesta")
+        c.drawString(410, y, "Correcta")
+        y -= 12
+        c.setFont("Helvetica", 8)
+        for q in summary["questions"]:
+            if y < 48:
+                c.showPage()
+                y = height - 36
+                c.setFont("Helvetica", 8)
+            c.drawString(36, y, str(q["question_number"]))
+            c.drawString(58, y, str(q["status"])[:10])
+            c.drawString(116, y, str(q["topic"])[:28])
+            c.drawString(260, y, str(q["your_answer"])[:30])
+            c.drawString(410, y, str(q["correct_answer"])[:30])
+            y -= 11
+        c.save()
+        return Response(
+            pdf_buf.getvalue(),
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=session_{token}_summary.pdf"},
         )
 
     @app.get("/api/teacher/live")

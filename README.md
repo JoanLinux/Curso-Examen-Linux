@@ -56,3 +56,6 @@ sudo systemctl restart apache2
 - El banco de reactivos es variable por alumno (aleatorio por sesion).
 - Los ejercicios shell son evaluados por patrones de comando aceptados.
 - Si quieres autenticacion de profesor y exportacion a Excel/PDF, se puede agregar en la siguiente iteracion.
+
+## Documentacion adicional
+- Manual de usuario (desarrollo): `docs/MANUAL_USUARIO_DESARROLLO.md`

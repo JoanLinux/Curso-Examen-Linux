@@ -70,6 +70,9 @@ body {
   margin: 0 auto;
   text-align: center;
 }
+.cover-actions {
+  justify-content: center;
+}
 .cover-logos {
   margin: 18px 0 10px;
   display: flex;

@@ -1,14 +1,14 @@
 {% extends 'base.html' %}
 {% block content %}
 <section class="card cover-card">
-  <h1>Curso - Examen Linux</h1>
+  <h1>Curso Linux</h1>
   <p>Plataforma de evaluacion y practica en tiempo real.</p>
   <div class="cover-logos">
     <img src="{{ url_for('static', filename='images/ikusi_logo_local.png') }}" alt="IKUSI">
     <img src="{{ url_for('static', filename='images/sat_logo_local.png') }}" alt="SAT">
   </div>
-  <div class="actions">
-    <a class="btn-link" href="{{ url_for('student_page') }}">Entrar al Curso - Examen</a>
+  <div class="actions cover-actions">
+    <a class="btn-link" href="{{ url_for('student_page') }}">Entrar al Curso</a>
   </div>
 </section>
 {% endblock %}

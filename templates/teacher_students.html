@@ -10,6 +10,12 @@
   <div class="form-grid" style="max-width:700px;">
     <label for="studentSel"><strong>Alumno</strong></label>
     <select id="studentSel"></select>
+    <label for="attemptSel"><strong>Intento a visualizar</strong></label>
+    <select id="attemptSel"></select>
+    <div class="actions">
+      <a id="attemptCsvBtn" class="btn-link secondary" href="#" target="_blank" rel="noopener">Exportar CSV</a>
+      <a id="attemptPdfBtn" class="btn-link secondary" href="#" target="_blank" rel="noopener">Exportar PDF</a>
+    </div>
   </div>
 
   <section class="grid-2" style="margin-top:14px;">
@@ -40,6 +46,9 @@
   <h2 style="margin-top:14px;">Historial de intentos</h2>
   <div class="responses" id="attemptsBox"></div>
 
+  <h2 style="margin-top:14px;">Resumen del intento seleccionado</h2>
+  <div class="card-lite" id="attemptSummaryBox">Selecciona un intento para ver detalle.</div>
+
   <h2 style="margin-top:14px;">Lectura Pedagogica</h2>
   <div class="card-lite">
     <table>
@@ -59,6 +68,10 @@
 
 <script>
 const studentDetailBaseUrl = "{{ url_for('teacher_student_detail', student_key='__KEY__') }}";
+const teacherSessionSummaryBaseUrl = "{{ url_for('teacher_session_summary', token='__TOKEN__') }}";
+const teacherSessionSummaryCsvBaseUrl = "{{ url_for('teacher_session_summary_csv', token='__TOKEN__') }}";
+const teacherSessionSummaryPdfBaseUrl = "{{ url_for('teacher_session_summary_pdf', token='__TOKEN__') }}";
+const teacherSessionGradeBaseUrl = "{{ url_for('teacher_override_question_grade', token='__TOKEN__', question_number=999999) }}";
 
 function esc(v) {
   return String(v ?? '')
@@ -76,6 +89,30 @@ function fmtSeconds(total) {
   return `${h}:${m}:${sec}`;
 }
 
+function sessionSummaryUrl(token) {
+  return teacherSessionSummaryBaseUrl.replace('__TOKEN__', encodeURIComponent(token));
+}
+function sessionSummaryCsvUrl(token) {
+  return teacherSessionSummaryCsvBaseUrl.replace('__TOKEN__', encodeURIComponent(token));
+}
+function sessionSummaryPdfUrl(token) {
+  return teacherSessionSummaryPdfBaseUrl.replace('__TOKEN__', encodeURIComponent(token));
+}
+function sessionGradeUrl(token, questionNumber) {
+  return teacherSessionGradeBaseUrl
+    .replace('__TOKEN__', encodeURIComponent(token))
+    .replace('/999999/', `/${encodeURIComponent(String(questionNumber))}/`);
+}
+
+async function saveTeacherGrade(token, questionNumber, isCorrect) {
+  const res = await fetch(sessionGradeUrl(token, questionNumber), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_correct: !!isCorrect }),
+  });
+  return await res.json();
+}
+
 async function loadStudents() {
   const res = await fetch("{{ url_for('teacher_students') }}");
   const data = await res.json();
@@ -89,6 +126,86 @@ async function loadStudents() {
     await loadDetail(rows[0].student_key);
   } else {
     sel.innerHTML = '<option value="">Sin alumnos</option>';
+  }
+}
+
+async function loadAttemptSummary(token) {
+  const box = document.getElementById('attemptSummaryBox');
+  if (!token) {
+    box.innerHTML = 'Selecciona un intento para ver detalle.';
+    return;
+  }
+  try {
+    const res = await fetch(sessionSummaryUrl(token));
+    const payload = await res.json();
+    if (!res.ok) {
+      box.innerHTML = `<div class="small">${esc(payload.error || 'No se pudo cargar el resumen')}</div>`;
+      return;
+    }
+    const summary = payload.summary || {};
+    const comp = payload.comparative || {};
+    const rows = summary.questions || [];
+    box.innerHTML = `
+      <div class="small"><strong>Puntaje:</strong> ${Number(summary.score || 0)}/${Number(summary.total || 0)} | <strong>Tiempo:</strong> ${fmtSeconds(summary.elapsed_seconds || 0)}</div>
+      <div class="small"><strong>Comparativo:</strong> intento ${Number(comp.current_score_pct || 0).toFixed(2)}% vs promedio alumno ${Number(comp.student_avg_score_pct || 0).toFixed(2)}%</div>
+      <div style="overflow:auto; margin-top:8px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Pregunta</th><th>Tema</th><th>Estado</th><th>Tu respuesta</th><th>Correcta</th><th>Tiempo</th><th>Evaluacion docente</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td>P${Number(r.question_number || 0)}</td>
+                <td>${esc(r.topic || '-')}</td>
+                <td>${esc(r.status || '-')}</td>
+                <td>${esc(r.your_answer || '-')}</td>
+                <td>${esc(r.correct_answer || '-')}</td>
+                <td>${fmtSeconds(r.seconds_spent || 0)}</td>
+                <td>
+                  <select class="grade-select" data-q="${Number(r.question_number || 0)}">
+                    <option value="1" ${r.is_correct ? 'selected' : ''}>Correcta</option>
+                    <option value="0" ${!r.is_correct ? 'selected' : ''}>Incorrecta</option>
+                  </select>
+                  <button type="button" class="secondary save-grade-btn" data-q="${Number(r.question_number || 0)}">Guardar</button>
+                  <div class="small grade-msg" id="gradeMsg_${Number(r.question_number || 0)}"></div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    box.querySelectorAll('.save-grade-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const q = Number(btn.getAttribute('data-q') || 0);
+        if (!q) return;
+        const sel = box.querySelector(`.grade-select[data-q="${q}"]`);
+        const msg = document.getElementById(`gradeMsg_${q}`);
+        const isCorrect = String(sel?.value || '0') === '1';
+        btn.disabled = true;
+        if (msg) msg.textContent = 'Guardando...';
+        try {
+          const out = await saveTeacherGrade(token, q, isCorrect);
+          if (!out || out.error) {
+            if (msg) msg.textContent = out?.error || 'No se pudo guardar';
+          } else {
+            if (msg) msg.textContent = `Guardado. Nuevo puntaje: ${Number(out.new_score || 0)}/${Number(summary.total || 0)}`;
+            await loadAttemptSummary(token);
+          }
+        } catch (_) {
+          if (msg) msg.textContent = 'Error de red al guardar';
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+    document.getElementById('attemptCsvBtn').href = sessionSummaryCsvUrl(token);
+    document.getElementById('attemptPdfBtn').href = sessionSummaryPdfUrl(token);
+  } catch (_) {
+    box.innerHTML = '<div class="small">No se pudo cargar el resumen del intento.</div>';
   }
 }
 
@@ -174,8 +291,31 @@ async function loadDetail(studentKey) {
       <div class="small">Fin: ${esc(a.finished_at || '-')} UTC</div>
       <div class="small">Puntaje: ${Number(a.score || 0)}/${Number(a.total_items || 0)} (${Number(a.score_pct || 0).toFixed(2)}%)</div>
       <div class="small">Tiempo: ${fmtSeconds(a.elapsed_seconds || 0)} | Reinicios: ${Number(a.resets_count || 0)}</div>
+      <div class="small"><button type="button" class="secondary attempt-view-btn" data-token="${esc(a.session_token)}">Ver este intento</button></div>
     </div>
   `).join('') || '<div class="small">Sin intentos.</div>';
+
+  document.querySelectorAll('.attempt-view-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const token = btn.getAttribute('data-token') || '';
+      const sel = document.getElementById('attemptSel');
+      if (sel) sel.value = token;
+      await loadAttemptSummary(token);
+    });
+  });
+
+  const attemptSel = document.getElementById('attemptSel');
+  const attemptsOrdered = (data.attempts_timeline || []).slice().sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
+  attemptSel.innerHTML = attemptsOrdered.map((a, i) => `
+    <option value="${esc(a.session_token)}">
+      Intento ${i + 1} | ${Number(a.score || 0)}/${Number(a.total_items || 0)} | ${fmtSeconds(a.elapsed_seconds || 0)} | ${esc(a.started_at || '-')}
+    </option>
+  `).join('') || '<option value="">Sin intentos</option>';
+  const selectedAttempt = attemptsOrdered.length ? attemptsOrdered[attemptsOrdered.length - 1].session_token : '';
+  attemptSel.value = selectedAttempt;
+  document.getElementById('attemptCsvBtn').href = selectedAttempt ? sessionSummaryCsvUrl(selectedAttempt) : '#';
+  document.getElementById('attemptPdfBtn').href = selectedAttempt ? sessionSummaryPdfUrl(selectedAttempt) : '#';
+  await loadAttemptSummary(selectedAttempt);
 
   const attempts = data.attempts_timeline || [];
   const completedAttempts = attempts.filter(x => !!x.completed);
@@ -291,6 +431,12 @@ async function loadDetail(studentKey) {
 
 document.getElementById('studentSel').addEventListener('change', async (e) => {
   await loadDetail(e.target.value);
+});
+document.getElementById('attemptSel').addEventListener('change', async (e) => {
+  const token = e.target.value || '';
+  document.getElementById('attemptCsvBtn').href = token ? sessionSummaryCsvUrl(token) : '#';
+  document.getElementById('attemptPdfBtn').href = token ? sessionSummaryPdfUrl(token) : '#';
+  await loadAttemptSummary(token);
 });
 
 loadStudents();

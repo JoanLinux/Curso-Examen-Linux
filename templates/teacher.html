@@ -11,6 +11,13 @@
   <article class="card">
     <h1>Dashboard Profesor</h1>
     <p>Monitoreo en tiempo real de respuestas y avance por alumno.</p>
+    <div class="card-lite" style="margin-top:8px; margin-bottom:10px;">
+      <label class="small" style="display:flex; align-items:center; gap:8px;">
+        <input id="showResultsSwitch" type="checkbox">
+        Mostrar resultados al alumno al finalizar
+      </label>
+      <div id="showResultsMeta" class="small" style="margin-top:4px;"></div>
+    </div>
     <div class="actions" style="margin-top:8px; margin-bottom:8px;">
       <a class="btn-link" href="{{ url_for('teacher_history_page') }}">Historial</a>
       <a class="btn-link secondary" href="{{ url_for('teacher_students_page') }}">Analisis por alumno</a>
@@ -20,6 +27,7 @@
       <thead>
         <tr>
           <th>Alumno</th>
+          <th>Nivel</th>
           <th>Avance</th>
           <th>Pregunta actual</th>
           <th>Puntaje</th>
@@ -51,6 +59,8 @@
 const resetBaseUrl = "{{ url_for('teacher_reset_exam', token='__TOKEN__') }}";
 const deleteBaseUrl = "{{ url_for('teacher_delete_exam', token='__TOKEN__') }}";
 const saveBaseUrl = "{{ url_for('teacher_save_exam', token='__TOKEN__') }}";
+const teacherSettingsUrl = "{{ url_for('teacher_settings_get') }}";
+const teacherLevelUrl = "{{ url_for('teacher_set_student_level') }}";
 
 function esc(v) {
   return String(v ?? '')
@@ -69,6 +79,28 @@ function fmtSeconds(total) {
   return `${h}:${m}:${sec}`;
 }
 
+async function loadTeacherSettings() {
+  try {
+    const res = await fetch(teacherSettingsUrl);
+    const data = await res.json();
+    if (!res.ok) return;
+    const enabled = !!data.show_student_results_to_student;
+    const sw = document.getElementById('showResultsSwitch');
+    const meta = document.getElementById('showResultsMeta');
+    if (sw) sw.checked = enabled;
+    if (meta) meta.textContent = enabled ? 'Activo: el alumno ve su resultado al finalizar.' : 'Inactivo: el alumno no ve resultados al finalizar.';
+  } catch (_) {}
+}
+
+async function saveTeacherSettings(enabled) {
+  const res = await fetch(teacherSettingsUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ show_student_results_to_student: !!enabled }),
+  });
+  return await res.json();
+}
+
 async function refreshDashboard() {
   const res = await fetch("{{ url_for('teacher_live') }}");
   const data = await res.json();
@@ -78,8 +110,21 @@ async function refreshDashboard() {
   const body = document.getElementById('sessionsBody');
   body.innerHTML = data.sessions.map(s => {
     const status = s.completed ? 'Finalizado' : 'En curso';
+    const assignedLevel = Number(s.assigned_level || 1);
+    const sessionLevel = Number(s.exam_level || 1);
+    const levelLabel = `Actual N${sessionLevel} / Objetivo N${assignedLevel}`;
     return `<tr>
       <td>${esc(s.student_name)}</td>
+      <td>
+        <div class="small">${levelLabel}</div>
+        <div style="display:flex; gap:6px; margin-top:4px;">
+          <select class="level-select" data-email="${esc(s.student_email)}">
+            <option value="1" ${assignedLevel === 1 ? 'selected' : ''}>Nivel 1</option>
+            <option value="2" ${assignedLevel === 2 ? 'selected' : ''}>Nivel 2</option>
+          </select>
+          <button type="button" class="secondary level-btn" data-email="${esc(s.student_email)}">Aplicar</button>
+        </div>
+      </td>
       <td>${Number(s.current_index || 0)}/${Number(s.total_items || 0)}</td>
       <td>#${s.current_question_number || s.current_index}</td>
       <td>${Number(s.score || 0)}/${Number(s.total_items || 0)}</td>
@@ -217,9 +262,52 @@ async function refreshDashboard() {
       await refreshDashboard();
     });
   });
+
+  document.querySelectorAll('.level-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const email = String(btn.dataset.email || '').trim();
+      if (!email) return;
+      const sel = btn.parentElement ? btn.parentElement.querySelector('.level-select') : null;
+      const examLevel = Number(sel?.value || 1);
+      btn.disabled = true;
+      try {
+        const rr = await fetch(teacherLevelUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ student_email: email, exam_level: examLevel })
+        });
+        const j = await rr.json();
+        if (!rr.ok) {
+          alert(j.error || 'No se pudo cambiar nivel');
+          return;
+        }
+        await refreshDashboard();
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 refreshDashboard();
 setInterval(refreshDashboard, 2000);
+loadTeacherSettings();
+document.getElementById('showResultsSwitch').addEventListener('change', async (e) => {
+  const target = e.target;
+  target.disabled = true;
+  const meta = document.getElementById('showResultsMeta');
+  if (meta) meta.textContent = 'Guardando...';
+  try {
+    const out = await saveTeacherSettings(!!target.checked);
+    if (!out || out.error) {
+      if (meta) meta.textContent = out?.error || 'No se pudo guardar';
+      await loadTeacherSettings();
+      return;
+    }
+    await loadTeacherSettings();
+  } finally {
+    target.disabled = false;
+  }
+});
 </script>
 {% endblock %}

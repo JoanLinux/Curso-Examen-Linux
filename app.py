@@ -67,6 +67,29 @@ DISTRO_ROTATION = [
     {"name": "Alpine Linux", "image": "alpine.svg"},
     {"name": "Rocky Linux", "image": "rocky.svg"},
     {"name": "AlmaLinux", "image": "almalinux.svg"},
+    {"name": "Parrot OS", "image": "parrotos.svg"},
+    {"name": "Red Hat Enterprise Linux", "image": "redhat.svg"},
+    {"name": "SUSE Linux Enterprise", "image": "suse.svg"},
+    {"name": "NixOS", "image": "nixos.svg"},
+    {"name": "Void Linux", "image": "voidlinux.svg"},
+    {"name": "EndeavourOS", "image": "endeavouros.svg"},
+    {"name": "Zorin OS", "image": "zorin.svg"},
+    {"name": "elementary OS", "image": "elementary.svg"},
+    {"name": "Pop!_OS", "image": "popos.svg"},
+    {"name": "Kubuntu", "image": "kubuntu.svg"},
+    {"name": "Lubuntu", "image": "lubuntu.svg"},
+    {"name": "Xubuntu", "image": "xubuntu.svg"},
+    {"name": "Ubuntu MATE", "image": "ubuntumate.svg"},
+    {"name": "Tails", "image": "tails.svg"},
+    {"name": "Qubes OS", "image": "qubesos.svg"},
+    {"name": "Devuan", "image": "devuan.svg"},
+    {"name": "Solus", "image": "solus.svg"},
+    {"name": "KDE neon", "image": "kdeneon.svg"},
+    {"name": "Deepin", "image": "deepin.svg"},
+    {"name": "Slint", "image": "slint.svg"},
+    {"name": "Mandrake Linux", "image": "mandrake.svg"},
+    {"name": "Mandriva", "image": "mandriva.svg"},
+    {"name": "Caldera OpenLinux", "image": "caldera.svg"},
 ]
 
 DEFAULT_TOPIC = "General Linux"
@@ -81,13 +104,15 @@ def topic_for_item_id(item_id: str) -> str:
             return "Firewall y seguridad"
         if "chmod" in iid or "chown" in iid:
             return "Permisos y propiedad"
+        if "samba" in iid or "smbpasswd" in iid:
+            return "Permisos y propiedad"
         if "cron" in iid:
             return "Tareas programadas (cron)"
         if "pkg_" in iid or "apt" in iid or "dpkg" in iid:
             return "Gestion de paquetes"
         if "net_" in iid or iid.endswith("ss_listen") or "ss_" in iid:
             return "Redes"
-        if "proc_" in iid or "ps_" in iid or "top" in iid or "htop" in iid:
+        if "proc_" in iid or "ps_" in iid or "top" in iid or "htop" in iid or "kill" in iid or "pkill" in iid:
             return "Procesos y rendimiento"
         if "journal" in iid or "log" in iid or "grep" in iid or "tail" in iid or "head" in iid:
             return "Logs y diagnostico"
@@ -95,7 +120,7 @@ def topic_for_item_id(item_id: str) -> str:
             return "Respaldo y restauracion"
         if "find" in iid or "cat_" in iid or "mv_" in iid or "df_" in iid or "du_" in iid:
             return "Archivos y filesystem"
-        if "shadow" in iid or "whoami" in iid or "last" in iid or "user_" in iid:
+        if "shadow" in iid or "whoami" in iid or "last" in iid or "user_" in iid or "keyring" in iid or "priv_" in iid:
             return "Usuarios y cuentas"
         return "Comandos de shell"
     if iid.startswith("hist_"):
@@ -340,6 +365,49 @@ COMMAND_QUESTIONS = [
         "type": "mcq",
         "prompt": "Selecciona el comando COMPLETO para desinstalar htop SIN borrar archivos de configuracion.",
         "choices": ["apt remove htop -y", "apt purge htop -y", "dpkg --purge htop", "apt autoremove --purge htop -y"],
+        "correct": 0,
+    },
+    {
+        "id": "cmd_priv_user_vs_sudo",
+        "type": "mcq",
+        "prompt": "Cual afirmacion describe mejor la diferencia entre usuario normal y sudo?",
+        "choices": [
+            "El usuario normal tiene permisos limitados; sudo ejecuta temporalmente con privilegios de administrador.",
+            "Sudo solo sirve para cambiar de directorio.",
+            "No hay diferencia real en Ubuntu.",
+            "Sudo solo se usa para comandos de red.",
+        ],
+        "correct": 0,
+    },
+    {
+        "id": "cmd_keyring_reset_path",
+        "type": "mcq",
+        "prompt": "Si el usuario olvido la clave del Keyring de GNOME, que accion tecnica se usa para reiniciarlo (con respaldo)?",
+        "choices": [
+            "mv ~/.local/share/keyrings ~/.local/share/keyrings.bak",
+            "rm -rf /etc/passwd",
+            "systemctl restart keyringd --factory-reset",
+            "chown root:root ~/.bashrc",
+        ],
+        "correct": 0,
+    },
+    {
+        "id": "cmd_proc_kill_safe_case",
+        "type": "mcq",
+        "prompt": "En software colgado, que secuencia es mas segura antes de forzar con -9?",
+        "choices": [
+            "Identificar PID con ps/top y usar kill PID; solo si no responde, kill -9 PID.",
+            "Usar kill -9 siempre primero para ahorrar tiempo.",
+            "Reiniciar el equipo inmediatamente.",
+            "Borrar los logs del sistema.",
+        ],
+        "correct": 0,
+    },
+    {
+        "id": "cmd_logs_cups_journal",
+        "type": "mcq",
+        "prompt": "Si impresion falla por servicio cups, selecciona el comando COMPLETO para ver sus ultimos eventos.",
+        "choices": ["journalctl -u cups -n 50", "tail -f cups", "lpstat -u cups -n 50", "systemctl log cups"],
         "correct": 0,
     },
     {
@@ -1152,6 +1220,96 @@ SHELL_EXERCISES = [
         "expected": "du -h /var | sort -hr | head -n 5",
         "success_output": "Top de consumo en /var mostrado.",
     },
+    {
+        "id": "shell_disk_du_varlog",
+        "type": "shell",
+        "title": "Disco lleno - logs pesados",
+        "prompt": "Localiza carpetas pesadas dentro de /var/log.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^(sudo\s+)?du\s+-sh\s+/var/log/\*$"],
+        "expected": "du -sh /var/log/*",
+        "success_output": "Consumo por carpeta en /var/log mostrado.",
+    },
+    {
+        "id": "shell_disk_clean_apt",
+        "type": "shell",
+        "title": "Disco lleno - limpieza apt",
+        "prompt": "Caso practico: limpia cache de paquetes para liberar espacio.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^(sudo\s+)?apt\s+clean$"],
+        "expected": "apt clean",
+        "success_output": "Cache de apt limpiada correctamente.",
+    },
+    {
+        "id": "shell_disk_autoremove_purge",
+        "type": "shell",
+        "title": "Disco lleno - purge de obsoletos",
+        "prompt": "Caso practico: elimina paquetes/dependencias obsoletas con purge.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^(sudo\s+)?apt\s+autoremove\s+--purge(\s+-y)?$"],
+        "expected": "apt autoremove --purge -y",
+        "success_output": "Paquetes obsoletos eliminados con purge.",
+    },
+    {
+        "id": "shell_keyring_reset",
+        "type": "shell",
+        "title": "Keyring GNOME",
+        "prompt": "El usuario olvido su clave del keyring. Renombra el directorio de keyrings para reinicio controlado.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^mv\s+~/.local/share/keyrings\s+~/.local/share/keyrings\.bak$"],
+        "expected": "mv ~/.local/share/keyrings ~/.local/share/keyrings.bak",
+        "success_output": "Keyring renombrado para reinicializacion en siguiente login.",
+    },
+    {
+        "id": "shell_samba_smbpasswd",
+        "type": "shell",
+        "title": "Samba - credencial usuario",
+        "prompt": "Configura/actualiza la clave Samba del usuario alumno.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^(sudo\s+)?smbpasswd\s+-a\s+alumno$"],
+        "expected": "smbpasswd -a alumno",
+        "success_output": "Usuario Samba alumno actualizado correctamente.",
+    },
+    {
+        "id": "shell_samba_testparm",
+        "type": "shell",
+        "title": "Samba - validar configuracion",
+        "prompt": "Valida la sintaxis de la configuracion Samba.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^(sudo\s+)?testparm$"],
+        "expected": "testparm",
+        "success_output": "Configuracion Samba validada (sin errores de sintaxis).",
+    },
+    {
+        "id": "shell_kill_hung_app",
+        "type": "shell",
+        "title": "Software colgado",
+        "prompt": "Finaliza de forma normal el proceso colgado con PID 4321.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^kill\s+4321$"],
+        "expected": "kill 4321",
+        "success_output": "Senal TERM enviada al proceso 4321.",
+    },
+    {
+        "id": "shell_journalctl_cups",
+        "type": "shell",
+        "title": "Logs de impresion",
+        "prompt": "Consulta las ultimas 50 lineas del servicio de impresion cups.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^journalctl\s+-u\s+cups\s+-n\s+50$"],
+        "expected": "journalctl -u cups -n 50",
+        "success_output": "Eventos recientes de cups mostrados.",
+    },
+    {
+        "id": "shell_journalctl_errors_priority",
+        "type": "shell",
+        "title": "Logs - errores recientes",
+        "prompt": "Muestra solo errores recientes del sistema (prioridad err) en las ultimas 50 lineas.",
+        "terminal_hint": "alumno@linux:~$",
+        "accepted": [r"^journalctl\s+-p\s+err\s+-n\s+50$"],
+        "expected": "journalctl -p err -n 50",
+        "success_output": "Errores recientes del sistema mostrados.",
+    },
 ]
 
 
@@ -1262,6 +1420,69 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def normalize_email(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def parse_bool_setting(value: Optional[str], default: bool) -> bool:
+    if value is None:
+        return bool(default)
+    return str(value).strip().lower() in {"1", "true", "yes", "si", "on"}
+
+
+def get_bool_setting(conn: sqlite3.Connection, key: str, default: bool) -> bool:
+    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return bool(default)
+    return parse_bool_setting(row["value"], default)
+
+
+def set_bool_setting(conn: sqlite3.Connection, key: str, value: bool) -> None:
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, "1" if value else "0"),
+    )
+
+
+def get_student_level(conn: sqlite3.Connection, student_email: str, default_level: int = 1) -> int:
+    email = normalize_email(student_email)
+    if not email:
+        return int(default_level)
+    row = conn.execute(
+        "SELECT exam_level FROM student_levels WHERE student_email = ?",
+        (email,),
+    ).fetchone()
+    if not row:
+        return int(default_level)
+    try:
+        lvl = int(row["exam_level"])
+    except Exception:
+        lvl = int(default_level)
+    return 2 if lvl >= 2 else 1
+
+
+def set_student_level(conn: sqlite3.Connection, student_email: str, exam_level: int) -> int:
+    email = normalize_email(student_email)
+    lvl = 2 if int(exam_level) >= 2 else 1
+    if not email:
+        return lvl
+    conn.execute(
+        """
+        INSERT INTO student_levels (student_email, exam_level, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(student_email) DO UPDATE
+        SET exam_level = excluded.exam_level,
+            updated_at = excluded.updated_at
+        """,
+        (email, lvl, utcnow_iso()),
+    )
+    return lvl
+
+
 def init_db() -> None:
     INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
@@ -1279,6 +1500,7 @@ def init_db() -> None:
                 completed INTEGER NOT NULL DEFAULT 0,
                 score INTEGER NOT NULL DEFAULT 0,
                 resets_count INTEGER NOT NULL DEFAULT 0,
+                exam_level INTEGER NOT NULL DEFAULT 1,
                 exam_payload TEXT NOT NULL
             );
 
@@ -1337,6 +1559,17 @@ def init_db() -> None:
                 seen_at TEXT NOT NULL,
                 UNIQUE(student_key, item_id)
             );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS student_levels (
+                student_email TEXT PRIMARY KEY,
+                exam_level INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         cols = conn.execute("PRAGMA table_info(exam_sessions)").fetchall()
@@ -1349,6 +1582,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE exam_sessions ADD COLUMN student_email TEXT NOT NULL DEFAULT ''")
         if "summary_viewed_at" not in names:
             conn.execute("ALTER TABLE exam_sessions ADD COLUMN summary_viewed_at TEXT")
+        if "exam_level" not in names:
+            conn.execute("ALTER TABLE exam_sessions ADD COLUMN exam_level INTEGER NOT NULL DEFAULT 1")
         response_cols = conn.execute("PRAGMA table_info(responses)").fetchall()
         response_names = {c["name"] for c in response_cols}
         if "distro_guess" not in response_names:
@@ -1376,7 +1611,7 @@ def _prefer_unseen(pool: List[Dict], seen_ids: set, k: int) -> List[Dict]:
     return chosen
 
 
-def build_exam(student_key: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> List[Dict]:
+def build_exam(student_key: Optional[str] = None, conn: Optional[sqlite3.Connection] = None, exam_level: int = 1) -> List[Dict]:
     seen_ids = set()
     if student_key and conn is not None:
         rows = conn.execute(
@@ -1385,67 +1620,129 @@ def build_exam(student_key: Optional[str] = None, conn: Optional[sqlite3.Connect
         ).fetchall()
         seen_ids = {r["item_id"] for r in rows}
 
-    cups_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_cups_")]
-    fw_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_fw_")]
-    chmod_num_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_chmod_num_")]
-    pkg_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_pkg_")]
-    other_cmd = [
-        q
-        for q in COMMAND_QUESTIONS
-        if not q["id"].startswith("cmd_cups_")
-        and not q["id"].startswith("cmd_fw_")
-        and not q["id"].startswith("cmd_chmod_num_")
-        and not q["id"].startswith("cmd_pkg_")
-    ]
-    kernel_hist = [q for q in HISTORY_QUESTIONS if q["id"].startswith("hist_kernel_")]
-    other_hist = [q for q in HISTORY_QUESTIONS if not q["id"].startswith("hist_kernel_")]
+    level = 2 if int(exam_level) >= 2 else 1
+    if level >= 2:
+        level2_cmd_prefixes = (
+            "cmd_disk_",
+            "cmd_keyring_",
+            "cmd_priv_",
+            "cmd_samba_",
+            "cmd_logs_",
+            "cmd_proc_",
+            "cmd_pkg_",
+            "cmd_apt_",
+            "cmd_dpkg_",
+        )
+        level2_cmd_ids = {
+            "cmd_du_sort",
+            "cmd_chmod_plusx_case",
+            "cmd_chmod_chown",
+            "cmd_systemctl_restart",
+            "cmd_journalctl_last",
+            "cmd_cups_status",
+            "cmd_cups_restart",
+            "cmd_cups_printers",
+            "cmd_cups_jobs",
+        }
+        level2_shell_prefixes = (
+            "shell_disk_",
+            "shell_keyring_",
+            "shell_samba_",
+            "shell_kill_",
+            "shell_journalctl_",
+        )
+        level2_shell_ids = {
+            "shell_systemctl_status",
+            "shell_systemctl_start_service",
+            "shell_grep_tail",
+            "shell_chmod_user_exec",
+            "shell_fix_script_perm",
+        }
+        level2_command_pool = [
+            q
+            for q in COMMAND_QUESTIONS
+            if q["id"].startswith(level2_cmd_prefixes) or q["id"] in level2_cmd_ids
+        ]
+        level2_shell_pool = [
+            q
+            for q in SHELL_EXERCISES
+            if q["id"].startswith(level2_shell_prefixes) or q["id"] in level2_shell_ids
+        ]
+        command = _prefer_unseen(level2_command_pool, seen_ids, min(12, len(level2_command_pool)))
+        history = _prefer_unseen(HISTORY_QUESTIONS, seen_ids, min(1, len(HISTORY_QUESTIONS)))
+        session3 = _prefer_unseen(SESSION3_IMAGE_QUESTIONS, seen_ids, min(2, len(SESSION3_IMAGE_QUESTIONS)))
+        images = _prefer_unseen(IMAGE_QUESTIONS, seen_ids, min(2, len(IMAGE_QUESTIONS)))
+        shell = _prefer_unseen(level2_shell_pool, seen_ids, min(10, len(level2_shell_pool)))
+        items = command + history + session3 + images + shell
+        target_total = 25
+        if len(items) < target_total:
+            used = {str(x.get("id") or "") for x in items}
+            filler_pool = [q for q in (COMMAND_QUESTIONS + SHELL_EXERCISES) if str(q.get("id") or "") not in used]
+            need = max(0, target_total - len(items))
+            if filler_pool and need > 0:
+                items.extend(_prefer_unseen(filler_pool, seen_ids, min(need, len(filler_pool))))
+    else:
+        cups_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_cups_")]
+        fw_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_fw_")]
+        chmod_num_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_chmod_num_")]
+        pkg_cmd = [q for q in COMMAND_QUESTIONS if q["id"].startswith("cmd_pkg_")]
+        other_cmd = [
+            q
+            for q in COMMAND_QUESTIONS
+            if not q["id"].startswith("cmd_cups_")
+            and not q["id"].startswith("cmd_fw_")
+            and not q["id"].startswith("cmd_chmod_num_")
+            and not q["id"].startswith("cmd_pkg_")
+        ]
+        kernel_hist = [q for q in HISTORY_QUESTIONS if q["id"].startswith("hist_kernel_")]
+        other_hist = [q for q in HISTORY_QUESTIONS if not q["id"].startswith("hist_kernel_")]
 
-    command: List[Dict] = []
-    if cups_cmd:
-        command.extend(_prefer_unseen(cups_cmd, seen_ids, 1))
-    if fw_cmd:
-        command.extend(_prefer_unseen(fw_cmd, seen_ids, 1))
-    if chmod_num_cmd:
-        command.extend(_prefer_unseen(chmod_num_cmd, seen_ids, 1))
-    if pkg_cmd:
-        command.extend(_prefer_unseen(pkg_cmd, seen_ids, 1))
-    remaining_cmd = max(0, min(12, len(COMMAND_QUESTIONS)) - len(command))
-    pool_cmd = [q for q in other_cmd if q not in command]
-    if pool_cmd and remaining_cmd > 0:
-        command.extend(_prefer_unseen(pool_cmd, seen_ids, min(remaining_cmd, len(pool_cmd))))
+        command: List[Dict] = []
+        if cups_cmd:
+            command.extend(_prefer_unseen(cups_cmd, seen_ids, 1))
+        if fw_cmd:
+            command.extend(_prefer_unseen(fw_cmd, seen_ids, 1))
+        if chmod_num_cmd:
+            command.extend(_prefer_unseen(chmod_num_cmd, seen_ids, 1))
+        if pkg_cmd:
+            command.extend(_prefer_unseen(pkg_cmd, seen_ids, 1))
+        remaining_cmd = max(0, min(12, len(COMMAND_QUESTIONS)) - len(command))
+        pool_cmd = [q for q in other_cmd if q not in command]
+        if pool_cmd and remaining_cmd > 0:
+            command.extend(_prefer_unseen(pool_cmd, seen_ids, min(remaining_cmd, len(pool_cmd))))
 
-    history = []
-    if kernel_hist:
-        history.extend(_prefer_unseen(kernel_hist, seen_ids, 1))
-    remaining_hist = max(0, min(3, len(HISTORY_QUESTIONS)) - len(history))
-    pool_hist = [q for q in other_hist if q not in history]
-    if pool_hist and remaining_hist > 0:
-        history.extend(_prefer_unseen(pool_hist, seen_ids, min(remaining_hist, len(pool_hist))))
+        history = []
+        if kernel_hist:
+            history.extend(_prefer_unseen(kernel_hist, seen_ids, 1))
+        remaining_hist = max(0, min(3, len(HISTORY_QUESTIONS)) - len(history))
+        pool_hist = [q for q in other_hist if q not in history]
+        if pool_hist and remaining_hist > 0:
+            history.extend(_prefer_unseen(pool_hist, seen_ids, min(remaining_hist, len(pool_hist))))
 
-    session3 = _prefer_unseen(SESSION3_IMAGE_QUESTIONS, seen_ids, min(4, len(SESSION3_IMAGE_QUESTIONS)))
-    images = _prefer_unseen(IMAGE_QUESTIONS, seen_ids, min(2, len(IMAGE_QUESTIONS)))
-    cat_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_cat_")]
-    df_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_df_")]
-    mv_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_mv_")]
-    other_shell = [
-        q
-        for q in SHELL_EXERCISES
-        if not q["id"].startswith("shell_cat_")
-        and not q["id"].startswith("shell_df_")
-        and not q["id"].startswith("shell_mv_")
-    ]
-    shell = []
-    if cat_shell:
-        shell.extend(_prefer_unseen(cat_shell, seen_ids, 1))
-    if df_shell:
-        shell.extend(_prefer_unseen(df_shell, seen_ids, 1))
-    if mv_shell:
-        shell.extend(_prefer_unseen(mv_shell, seen_ids, 1))
-    remaining_shell = max(0, min(8, len(SHELL_EXERCISES)) - len(shell))
-    pool_shell = [q for q in other_shell if q not in shell]
-    if pool_shell and remaining_shell > 0:
-        shell.extend(_prefer_unseen(pool_shell, seen_ids, min(remaining_shell, len(pool_shell))))
-    items = command + history + session3 + images + shell
+        session3 = _prefer_unseen(SESSION3_IMAGE_QUESTIONS, seen_ids, min(4, len(SESSION3_IMAGE_QUESTIONS)))
+        images = _prefer_unseen(IMAGE_QUESTIONS, seen_ids, min(2, len(IMAGE_QUESTIONS)))
+        cat_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_cat_")]
+        df_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_df_")]
+        mv_shell = [q for q in SHELL_EXERCISES if q["id"].startswith("shell_mv_")]
+        other_shell = [
+            q
+            for q in SHELL_EXERCISES
+            if not q["id"].startswith("shell_cat_")
+            and not q["id"].startswith("shell_df_")
+            and not q["id"].startswith("shell_mv_")
+        ]
+        shell = []
+        if cat_shell:
+            shell.extend(_prefer_unseen(cat_shell, seen_ids, 1))
+        if df_shell:
+            shell.extend(_prefer_unseen(df_shell, seen_ids, 1))
+        if mv_shell:
+            shell.extend(_prefer_unseen(mv_shell, seen_ids, 1))
+        remaining_shell = max(0, min(8, len(SHELL_EXERCISES)) - len(shell))
+        pool_shell = [q for q in other_shell if q not in shell]
+        if pool_shell and remaining_shell > 0:
+            shell.extend(_prefer_unseen(pool_shell, seen_ids, min(remaining_shell, len(pool_shell))))
+        items = command + history + session3 + images + shell
     randomized_items: List[Dict] = []
     for base_item in items:
         item = copy.deepcopy(base_item)
@@ -1804,7 +2101,16 @@ def create_app() -> Flask:
     app.config["SHOW_CORRECT_ANSWERS_TO_STUDENT"] = str(
         os.environ.get("SHOW_CORRECT_ANSWERS_TO_STUDENT", "1")
     ).strip().lower() not in {"0", "false", "no", "off"}
+    app.config["SHOW_STUDENT_RESULTS_TO_STUDENT"] = str(
+        os.environ.get("SHOW_STUDENT_RESULTS_TO_STUDENT", "1")
+    ).strip().lower() not in {"0", "false", "no", "off"}
     init_db()
+    with get_db() as conn:
+        set_bool_setting(
+            conn,
+            "show_student_results_to_student",
+            bool(app.config["SHOW_STUDENT_RESULTS_TO_STUDENT"]),
+        )
 
     def require_teacher_auth() -> Optional[Response]:
         auth = request.authorization
@@ -1829,13 +2135,14 @@ def create_app() -> Flask:
     @app.post("/start")
     def start_exam():
         student_name = request.form.get("student_name", "").strip()
-        student_email = request.form.get("student_email", "").strip().lower()
+        student_email = normalize_email(request.form.get("student_email", ""))
         if not student_name:
             return render_template("student_select.html", error="Ingresa tu nombre completo", show_teacher_link=False)
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", student_email):
             return render_template("student_select.html", error="Ingresa un correo valido", show_teacher_link=False)
 
         with get_db() as conn:
+            assigned_level = get_student_level(conn, student_email, default_level=1)
             existing = conn.execute(
                 """
                 SELECT session_token
@@ -1851,14 +2158,14 @@ def create_app() -> Flask:
 
             token = str(uuid.uuid4())
             student_key = student_key_for_cycle(student_name, student_email)
-            items = build_exam(student_key=student_key, conn=conn)
+            items = build_exam(student_key=student_key, conn=conn, exam_level=assigned_level)
             conn.execute(
                 """
                 INSERT INTO exam_sessions
-                (session_token, student_name, student_email, started_at, total_items, exam_payload)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (session_token, student_name, student_email, started_at, total_items, exam_level, exam_payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (token, student_name, student_email, utcnow_iso(), len(items), json.dumps(items)),
+                (token, student_name, student_email, utcnow_iso(), len(items), int(assigned_level), json.dumps(items)),
             )
             enter_question(conn, token, 0)
         return redirect(url_for("exam_page", token=token))
@@ -1884,11 +2191,17 @@ def create_app() -> Flask:
             idx = row["current_index"]
 
             if row["completed"]:
+                can_view_results = get_bool_setting(
+                    conn,
+                    "show_student_results_to_student",
+                    bool(app.config["SHOW_STUDENT_RESULTS_TO_STUDENT"]),
+                )
                 return jsonify(
                     {
                         "completed": True,
                         "score": row["score"],
                         "total": row["total_items"],
+                        "show_student_results": bool(can_view_results),
                         "student_name": row["student_name"],
                         "index": row["total_items"],
                         "started_at": row["started_at"],
@@ -1943,6 +2256,13 @@ def create_app() -> Flask:
     @app.get("/api/exam/<token>/summary")
     def exam_summary(token: str):
         with get_db() as conn:
+            can_view_results = get_bool_setting(
+                conn,
+                "show_student_results_to_student",
+                bool(app.config["SHOW_STUDENT_RESULTS_TO_STUDENT"]),
+            )
+            if not can_view_results:
+                return jsonify({"error": "Resultados ocultos por el maestro"}), 403
             summary = session_summary(
                 conn,
                 token,
@@ -2137,6 +2457,69 @@ def create_app() -> Flask:
         if auth_error:
             return auth_error
         return render_template("teacher_students.html", show_teacher_link=True, teacher_nav_mode=True)
+
+    @app.get("/api/teacher/settings")
+    def teacher_settings_get():
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        with get_db() as conn:
+            show_results = get_bool_setting(
+                conn,
+                "show_student_results_to_student",
+                bool(app.config["SHOW_STUDENT_RESULTS_TO_STUDENT"]),
+            )
+        return jsonify({"show_student_results_to_student": bool(show_results)})
+
+    @app.post("/api/teacher/settings")
+    def teacher_settings_set():
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        req = request.get_json(force=True, silent=True) or {}
+        raw = req.get("show_student_results_to_student")
+        if isinstance(raw, bool):
+            show_results = raw
+        elif str(raw).strip().lower() in {"1", "true", "yes", "si", "on"}:
+            show_results = True
+        elif str(raw).strip().lower() in {"0", "false", "no", "off"}:
+            show_results = False
+        else:
+            return jsonify({"error": "Valor invalido para show_student_results_to_student"}), 400
+        with get_db() as conn:
+            set_bool_setting(conn, "show_student_results_to_student", bool(show_results))
+        return jsonify({"ok": True, "show_student_results_to_student": bool(show_results)})
+
+    @app.post("/api/teacher/student-level")
+    def teacher_set_student_level():
+        auth_error = require_teacher_auth()
+        if auth_error:
+            return auth_error
+        req = request.get_json(force=True, silent=True) or {}
+        student_email = normalize_email(req.get("student_email") or "")
+        level_raw = req.get("exam_level")
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", student_email):
+            return jsonify({"error": "Correo invalido"}), 400
+        try:
+            exam_level = int(level_raw)
+        except Exception:
+            return jsonify({"error": "Nivel invalido"}), 400
+        exam_level = 2 if exam_level >= 2 else 1
+        with get_db() as conn:
+            applied_level = set_student_level(conn, student_email, exam_level)
+            active = conn.execute(
+                "SELECT COUNT(*) AS c FROM exam_sessions WHERE student_email = ? AND completed = 0",
+                (student_email,),
+            ).fetchone()
+        return jsonify(
+            {
+                "ok": True,
+                "student_email": student_email,
+                "exam_level": int(applied_level),
+                "active_sessions": int((active["c"] if active else 0) or 0),
+                "applies_next_attempt": True,
+            }
+        )
 
     @app.get("/teacher/distros")
     def teacher_distros_page():
@@ -2653,6 +3036,7 @@ def create_app() -> Flask:
                     s.completed,
                     s.score,
                     s.resets_count,
+                    s.exam_level,
                     s.exam_payload,
                     COALESCE(a.archive_count, 0) AS archive_count
                 FROM exam_sessions s
@@ -2701,10 +3085,17 @@ def create_app() -> Flask:
                 """
             ).fetchall()
 
+            level_rows = conn.execute(
+                "SELECT student_email, exam_level FROM student_levels"
+            ).fetchall()
+
         now_iso = utcnow_iso()
+        level_by_email = {normalize_email(r["student_email"]): int(r["exam_level"] or 1) for r in level_rows}
         session_data = []
         for s in sessions:
             d = dict(s)
+            email_key = normalize_email(d.get("student_email") or "")
+            d["assigned_level"] = int(level_by_email.get(email_key, int(d.get("exam_level") or 1)))
             d["elapsed_seconds"] = elapsed_seconds(d["started_at"], d["finished_at"])
             d["is_archived"] = int(d.get("archive_count") or 0) > 0
             try:
@@ -3001,11 +3392,17 @@ def create_app() -> Flask:
                 return jsonify({"error": "Sesion no encontrada"}), 404
 
             session_meta = conn.execute(
-                "SELECT student_name, student_email, current_index FROM exam_sessions WHERE session_token = ?",
+                "SELECT student_name, student_email, current_index, exam_level FROM exam_sessions WHERE session_token = ?",
                 (token,),
             ).fetchone()
             student_key = student_key_for_cycle(session_meta["student_name"], session_meta["student_email"]) if session_meta else ""
-            new_items = build_exam(student_key=student_key, conn=conn)
+            fallback_level = int(session_meta["exam_level"] or 1) if session_meta else 1
+            assigned_level = get_student_level(
+                conn,
+                session_meta["student_email"] if session_meta else "",
+                default_level=fallback_level,
+            )
+            new_items = build_exam(student_key=student_key, conn=conn, exam_level=assigned_level)
             current_idx = int(session_meta["current_index"]) if session_meta else 0
             leave_question(conn, token, current_idx)
             conn.execute("DELETE FROM responses WHERE session_token = ?", (token,))
@@ -3021,10 +3418,11 @@ def create_app() -> Flask:
                     completed = 0,
                     score = 0,
                     resets_count = resets_count + 1,
+                    exam_level = ?,
                     exam_payload = ?
                 WHERE session_token = ?
                 """,
-                (utcnow_iso(), len(new_items), json.dumps(new_items), token),
+                (utcnow_iso(), len(new_items), int(assigned_level), json.dumps(new_items), token),
             )
             enter_question(conn, token, 0)
 

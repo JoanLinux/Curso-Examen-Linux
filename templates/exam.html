@@ -155,13 +155,14 @@ function renderState(data) {
       clearInterval(heartbeatHandle);
       heartbeatHandle = null;
     }
+    const canView = data.show_student_results !== false;
     wrap.innerHTML = buildQuestionWrap(data.index || data.total, `
-      <div class="result">Finalizaste. Puntaje: <strong>${data.score}/${data.total}</strong></div>
+      <div class="result">Finalizaste.${canView ? ` Puntaje: <strong>${data.score}/${data.total}</strong>` : ''}</div>
       <div id="studentSummaryWrap" class="card-lite" style="margin-top:12px;">
-        <div class="small">Cargando resumen detallado...</div>
+        <div class="small">${canView ? 'Cargando resumen detallado...' : 'Resultados ocultos por configuracion del maestro.'}</div>
       </div>
     `);
-    loadStudentSummary();
+    if (canView) loadStudentSummary();
     progress.textContent = `Completado`;
     submitBtn.style.display = 'none';
     prevBtn.style.display = 'none';
@@ -364,6 +365,13 @@ function initShellState() {
     fs: createDir({
       home: createDir({
         alumno: createDir({
+          '.local': createDir({
+            share: createDir({
+              keyrings: createDir({
+                'login.keyring': createFile('GNOME_KEYRING_SIMULADO'),
+              }),
+            }),
+          }),
           respaldo: createDir({}),
           lab: createDir({
             '.env': createFile('TOKEN=abc123\nMODE=dev\n'),
@@ -577,9 +585,14 @@ const helpMap = {
   systemctl: "Uso: systemctl [comando] [unidad]\nEjemplos: systemctl status cups, systemctl restart apache2",
   journalctl: "Uso: journalctl [opciones]\nEjemplo: journalctl -u apache2 -n 30",
   lpstat: "Uso: lpstat [opciones]\n  -p  impresoras\n  -o  trabajos pendientes",
+  apt: "Uso: apt [comando]\nEjemplos: apt clean ; apt autoremove --purge -y",
+  testparm: "Uso: testparm\nValida sintaxis de /etc/samba/smb.conf.",
   tar: "Uso: tar [opciones] archivo\nEjemplos: tar -czf respaldo.tar.gz /etc ; tar -xzf respaldo.tar.gz",
   chmod: "Uso: chmod [opciones] modo archivo\nEjemplo: chmod 700 script.sh",
   chown: "Uso: chown [opciones] propietario[:grupo] archivo\nEjemplo: chown alumno:soporte script.sh",
+  smbpasswd: "Uso: smbpasswd -a USUARIO\nConfigura password Samba para el usuario.",
+  kill: "Uso: kill PID\nEnvia SIGTERM al proceso (cierre normal).",
+  pkill: "Uso: pkill PATRON\nFinaliza procesos por nombre/patron.",
   passwd: "Uso: passwd [USUARIO]\nCambia la contrasena del usuario (simulado).",
   sudo: "Uso: sudo <comando>\nEjemplo: sudo ss -tulnp",
   ss: "Uso: ss [OPCION]...\n  -t  tcp\n  -u  udp\n  -l  sockets en escucha\n  -n  sin resolver nombres\n  -p  mostrar proceso",
@@ -995,7 +1008,7 @@ function fakeShellOutput(cmd) {
     return helpMap[topic] ? `MANUAL (${topic})\n${helpMap[topic]}` : `No manual entry for ${topic}`;
   }
   if (c === 'help') {
-    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop ss sudo systemctl journalctl lpstat tar chmod chown passwd\nUsa '<comando> --help' o 'man <comando>'.";
+    return "Comandos simulados: ls cat more pwd du df free w last tail head grep find ps top htop ss sudo systemctl journalctl lpstat apt testparm tar chmod chown smbpasswd kill pkill passwd\nUsa '<comando> --help' o 'man <comando>'.";
   }
   if (c.startsWith('help ')) {
     const topic = c.split(/\s+/)[1];
@@ -1022,6 +1035,7 @@ function fakeShellOutput(cmd) {
   }
 
   if (/^du\s+-sm$/.test(c)) return "2048\t.";
+  if (/^(sudo\s+)?du\s+-sh\s+\/var\/log\/\*$/.test(c)) return "2.1G\t/var/log/apache2\n1.3G\t/var/log/journal\n420M\t/var/log/apt\n80M\t/var/log/cups";
   if (/^du\s+-h\s+\/var\s*\|\s*sort\s+-hr\s*\|\s*head\s+-n\s+5$/.test(c)) {
     return "12G\t/var/lib\n2.1G\t/var/log\n760M\t/var/cache\n120M\t/var/tmp\n18M\t/var/spool";
   }
@@ -1095,10 +1109,20 @@ function fakeShellOutput(cmd) {
   }
   if (/^systemctl\s+restart\s+(apache2|cups)$/.test(c)) return "Job for service executed successfully.";
   if (/^journalctl\s+-u\s+apache2\s+-n\s+\d+$/.test(c)) return "-- Logs begin --\nMar 07 12:31:12 apache2[1058]: Graceful restart requested\nMar 07 12:31:12 apache2[1058]: Resuming normal operations";
+  if (/^journalctl\s+-u\s+cups\s+-n\s+\d+$/.test(c)) return "-- Logs begin --\nMar 07 12:40:00 cupsd[2711]: Scheduler started\nMar 07 12:42:18 cupsd[2711]: Job 245 completed with warnings";
+  if (/^journalctl\s+-p\s+err\s+-n\s+\d+$/.test(c)) return "Mar 07 12:01:22 kernel: error: disk I/O timeout on sda\nMar 07 12:07:54 app: ERROR timeout contacting backend service";
   if (/^init\s+0$/.test(c)) return "Broadcast message: The system is going down for system halt NOW! (simulado)";
 
   if (/^lpstat\s+-p$/.test(c)) return "printer HP_Oficina is idle. enabled since Sat 07 Mar 2026 12:20:11 PM UTC";
   if (/^lpstat\s+-o$/.test(c)) return "HP_Oficina-245 alumno 1024 bytes\nHP_Oficina-246 alumno 2048 bytes";
+  if (/^(sudo\s+)?apt\s+clean$/.test(c)) return "Limpiando cache de paquetes...\nSe liberaron 512 MB en /var/cache/apt/archives.";
+  if (/^(sudo\s+)?apt\s+autoremove\s+--purge(\s+-y)?$/.test(c)) return "Se eliminaron 3 paquetes obsoletos (incluyendo configuraciones).";
+  if (/^(sudo\s+)?testparm$/.test(c)) return "Load smb config files from /etc/samba/smb.conf\nLoaded services file OK.\nServer role: ROLE_STANDALONE_SERVER";
+  if (/^mv\s+~\/\.local\/share\/keyrings\s+~\/\.local\/share\/keyrings\.bak$/.test(c)) return "Directorio keyrings renombrado. Se regenerara en el siguiente inicio de sesion.";
+  if (/^(sudo\s+)?smbpasswd\s+-a\s+alumno$/.test(c)) return "New SMB password:\nRetype new SMB password:\nAdded user alumno.";
+  if (/^kill\s+4321$/.test(c)) return "Proceso 4321 terminado correctamente (SIGTERM).";
+  if (/^kill\s+-9\s+4321$/.test(c)) return "Proceso 4321 finalizado forzadamente (SIGKILL).";
+  if (/^ps\s+aux\s*\|\s*grep\s+firefox$/.test(c)) return "alumno  4321 98.0  4.1 2456780 332112 ? Rl 13:40 12:15 firefox";
 
   if (/^tar\s+-czf\s+respaldo\.tar\.gz\s+\/etc$/.test(c)) return "respaldo.tar.gz creado correctamente.";
   if (/^tar\s+-xzf\s+respaldo\.tar\.gz$/.test(c)) return "Archivos extraidos desde respaldo.tar.gz";
